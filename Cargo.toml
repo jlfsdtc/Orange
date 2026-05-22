@@ -1,0 +1,70 @@
+[workspace]
+members = [
+    "crates/orange-core",
+    "crates/orange-regex",
+    "crates/orange-utils",
+    "crates/orange-settings",
+    "crates/orange-ui",
+    "crates/orange-app",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/jlfsdtc/Orange"
+rust-version = "1.75"
+
+[workspace.dependencies]
+# GUI
+gpui = "0.2"
+
+# Performance critical
+hyperscan = "0.3"
+roaring = "0.10"
+mimalloc = { version = "0.1", default-features = false }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+# Parallelism
+rayon = "1.8"
+flume = "0.11"
+
+# Async / IO
+tokio = { version = "1", features = ["rt-multi-thread", "fs", "io-util"] }
+
+# File watching
+notify = "7"
+
+# Encoding
+encoding_rs = "0.8"
+simdutf8 = "0.1"
+chardetng = "0.1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Network (version check)
+reqwest = { version = "0.12", features = ["json"] }
+
+# Testing
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+strip = "symbols"

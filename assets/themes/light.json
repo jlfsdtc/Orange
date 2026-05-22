@@ -1,0 +1,10 @@
+{
+  "background": "#eff1f5",
+  "foreground": "#4c4f69",
+  "selection": "#bcc0cc",
+  "line_number": "#9ca0b0",
+  "current_line": "#ccd0da",
+  "search_match": "#df8e1d",
+  "search_current": "#40a02b",
+  "bookmark": "#1e66f5"
+}

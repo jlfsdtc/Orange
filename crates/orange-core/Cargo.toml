@@ -1,0 +1,37 @@
+[package]
+name = "orange-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+orange-utils = { path = "../orange-utils" }
+orange-regex = { path = "../orange-regex" }
+orange-settings = { path = "../orange-settings" }
+
+roaring = { workspace = true }
+rayon = { workspace = true }
+flume = { workspace = true }
+tokio = { workspace = true }
+notify = { workspace = true }
+encoding_rs = { workspace = true }
+simdutf8 = { workspace = true }
+chardetng = { workspace = true }
+xxhash-rust = { workspace = true }
+mimalloc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+criterion = { workspace = true }
+
+[[bench]]
+name = "core_bench"
+harness = false
+
+[build-dependencies]
+cc = "1"

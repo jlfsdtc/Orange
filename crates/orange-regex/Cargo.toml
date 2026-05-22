@@ -1,0 +1,18 @@
+[package]
+name = "orange-regex"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+hyperscan = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "regex_bench"
+harness = false

@@ -1,0 +1,20 @@
+[package]
+name = "orange-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+orange-core = { path = "../orange-core" }
+orange-regex = { path = "../orange-regex" }
+orange-settings = { path = "../orange-settings" }
+
+gpui = { workspace = true }
+dirs = "6"
+roaring = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

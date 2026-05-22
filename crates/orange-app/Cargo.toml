@@ -1,0 +1,68 @@
+[package]
+name = "orange-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A fast log file viewer"
+homepage = "https://github.com/jlfsdtc/Orange"
+repository.workspace = true
+
+[[bin]]
+name = "orange"
+path = "src/main.rs"
+
+[[bin]]
+name = "orange-grep"
+path = "src/grep.rs"
+
+[dependencies]
+orange-core = { path = "../orange-core" }
+orange-regex = { path = "../orange-regex" }
+orange-ui = { path = "../orange-ui" }
+orange-settings = { path = "../orange-settings" }
+
+gpui = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+
+# --- Linux DEB metadata (cargo-deb) ---
+[package.metadata.deb]
+name = "orange"
+maintainer = "orange contributors <orange@example.invalid>"
+copyright = "GPL-3.0-or-later"
+extended-description = """\
+Orange is a fast log file viewer with regex filtering, live tail, bookmarks,
+and predefined highlight rules. It is a Rust rewrite of klogg."""
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/orange",                 "usr/bin/",                                   "755"],
+    ["target/release/orange-grep",            "usr/bin/",                                   "755"],
+    ["../../packaging/linux/orange.desktop",  "usr/share/applications/",                    "644"],
+    ["../../assets/icons/png/icon_16.png",    "usr/share/icons/hicolor/16x16/apps/orange.png",   "644"],
+    ["../../assets/icons/png/icon_32.png",    "usr/share/icons/hicolor/32x32/apps/orange.png",   "644"],
+    ["../../assets/icons/png/icon_64.png",    "usr/share/icons/hicolor/64x64/apps/orange.png",   "644"],
+    ["../../assets/icons/png/icon_128.png",   "usr/share/icons/hicolor/128x128/apps/orange.png", "644"],
+    ["../../assets/icons/png/icon_256.png",   "usr/share/icons/hicolor/256x256/apps/orange.png", "644"],
+    ["../../assets/icons/png/icon_512.png",   "usr/share/icons/hicolor/512x512/apps/orange.png", "644"],
+]
+
+# --- Linux RPM metadata (cargo-generate-rpm) ---
+[package.metadata.generate-rpm]
+name = "orange"
+summary = "A fast log file viewer"
+license = "GPL-3.0-or-later"
+url = "https://github.com/jlfsdtc/Orange"
+assets = [
+    { source = "target/release/orange",                 dest = "/usr/bin/orange",                                  mode = "755" },
+    { source = "target/release/orange-grep",            dest = "/usr/bin/orange-grep",                             mode = "755" },
+    { source = "packaging/linux/orange.desktop",        dest = "/usr/share/applications/orange.desktop",           mode = "644" },
+    { source = "assets/icons/png/icon_16.png",          dest = "/usr/share/icons/hicolor/16x16/apps/orange.png",   mode = "644" },
+    { source = "assets/icons/png/icon_32.png",          dest = "/usr/share/icons/hicolor/32x32/apps/orange.png",   mode = "644" },
+    { source = "assets/icons/png/icon_64.png",          dest = "/usr/share/icons/hicolor/64x64/apps/orange.png",   mode = "644" },
+    { source = "assets/icons/png/icon_128.png",         dest = "/usr/share/icons/hicolor/128x128/apps/orange.png", mode = "644" },
+    { source = "assets/icons/png/icon_256.png",         dest = "/usr/share/icons/hicolor/256x256/apps/orange.png", mode = "644" },
+    { source = "assets/icons/png/icon_512.png",         dest = "/usr/share/icons/hicolor/512x512/apps/orange.png", mode = "644" },
+]

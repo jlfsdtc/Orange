@@ -1,0 +1,18 @@
+[package]
+name = "orange-utils"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mimalloc = { workspace = true }
+xxhash-rust = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+tempfile = "3"
+
+[[bench]]
+name = "digest_bench"
+harness = false
