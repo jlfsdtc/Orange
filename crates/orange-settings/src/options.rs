@@ -19,6 +19,8 @@ pub struct Options {
     pub follow_file: bool,
     /// Number of lines to keep in overview.
     pub overview_context: u32,
+    /// Width of the minimap strip in pixels. Clamped by the UI at read time.
+    pub minimap_width: f32,
     /// Maximum number of recent files.
     pub max_recent_files: usize,
     /// Whether to use dark theme.
@@ -34,6 +36,7 @@ impl Default for Options {
             text_background_color: "#FFFFFF".to_string(),
             follow_file: false,
             overview_context: 4,
+            minimap_width: 48.0,
             max_recent_files: 20,
             dark_theme: true,
         }

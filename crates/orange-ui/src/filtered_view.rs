@@ -172,6 +172,14 @@ impl FilteredViewState {
         let log_data = self.log_data.clone();
         let pattern = self.pattern.clone();
 
+        // Size the gutter for the largest line number in the result set so
+        // big files still render their full row number. Char advance matches
+        // log_view::char_advance_for (0.6 × font size).
+        let max_line = *matching_lines.last().unwrap_or(&0);
+        let gutter_digits = filtered_digits_for(max_line + 1);
+        let char_advance = f32::from(font_size) * 0.6;
+        let gutter_width = gutter_digits as f32 * char_advance + 16.0 + 1.0;
+
         // Header
         let header = div()
             .flex()
@@ -234,10 +242,14 @@ impl FilteredViewState {
                                 .text_size(font_size)
                                 .child(
                                     div()
-                                        .w(px(80.0))
+                                        .w(px(gutter_width))
                                         .flex_shrink_0()
                                         .text_color(theme.line_number)
-                                        .child(format!("{}", line_num + 1)),
+                                        .child(format!(
+                                            "{:>width$}",
+                                            line_num + 1,
+                                            width = gutter_digits
+                                        )),
                                 )
                                 .child(
                                     div()
@@ -264,4 +276,11 @@ impl FilteredViewState {
             .child(list)
             .into_any()
     }
+}
+
+fn filtered_digits_for(n: u64) -> usize {
+    if n == 0 {
+        return 1;
+    }
+    (n as f64).log10().floor() as usize + 1
 }

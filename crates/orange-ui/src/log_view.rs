@@ -307,6 +307,45 @@ impl LogViewState {
         self.log_data.clone()
     }
 
+    /// Read-only access to the scroll handle, used by the minimap to
+    /// compute the current viewport range.
+    pub fn scroll_handle(&self) -> &UniformListScrollHandle {
+        &self.scroll_handle
+    }
+
+    /// Bookmarked line numbers. Returns an empty slice for now — bookmarks
+    /// aren't persisted yet, but the minimap reads through this method so
+    /// the rest of the wiring stays unchanged once they land.
+    pub fn bookmarks(&self) -> &[u64] {
+        &[]
+    }
+
+    /// Approximate `(first_visible_line, visible_count)` for the current
+    /// scroll position. Used by the minimap to draw the viewport rectangle.
+    /// `window_height_px` is the height of the LogView's list area.
+    pub fn viewport_lines(&self, font: &FontSettings, window_height_px: f32) -> (u64, u64) {
+        let lh = f32::from(font.line_height());
+        // Reach inside the public `UniformListScrollHandle` to read the
+        // inner `ScrollHandle` offset. `logical_scroll_top_index()` is
+        // available only with `test-support`, so we replicate its math:
+        // top item = `-offset.y / item_height`. Negative offset means the
+        // user has scrolled down.
+        let state = self.scroll_handle.0.borrow();
+        let offset_y = f32::from(state.base_handle.offset().y);
+        drop(state);
+        let first = if lh > 0.0 {
+            ((-offset_y) / lh).max(0.0) as u64
+        } else {
+            0
+        };
+        let visible = if lh > 0.0 {
+            (window_height_px / lh).ceil() as u64
+        } else {
+            0
+        };
+        (first.min(self.total_lines), visible.max(1))
+    }
+
     pub fn toggle_tail_mode(&mut self, cx: &mut Context<Self>) {
         self.tail_mode = !self.tail_mode;
         if self.tail_mode {
@@ -406,8 +445,11 @@ impl Render for LogViewState {
         let font_family = font.family.clone();
         let selection = self.selection;
         let log_data = self.log_data.clone();
-        let gutter_width = gutter_digits as f32 * 8.0 + 16.0;
         let char_advance = char_advance_for(font_size);
+        // Match the actual font advance so the largest line number always
+        // fits; 1.0 trailing px guards against fractional rounding clipping
+        // the right edge of the last digit.
+        let gutter_width = gutter_digits as f32 * char_advance + 16.0 + 1.0;
         let entity = cx.entity();
 
         uniform_list(

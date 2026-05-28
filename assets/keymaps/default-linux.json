@@ -19,6 +19,7 @@
     { "key": "secondary-l", "action": "GoToLineDialog" },
     { "key": "secondary-shift-p", "action": "ToggleFilterPanel" },
     { "key": "secondary-shift-t", "action": "ToggleTheme" },
+    { "key": "secondary-shift-m", "action": "ToggleMinimap" },
     { "key": "secondary-shift-s", "action": "ToggleScratchpad" },
     { "key": "secondary-shift-d", "action": "SaveSession" },
     { "key": "secondary-shift-o", "action": "LoadSession" },

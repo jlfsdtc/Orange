@@ -1,10 +1,10 @@
 {
-  "background": "#1e1e2e",
-  "foreground": "#cdd6f4",
-  "selection": "#45475a",
-  "line_number": "#6c7086",
-  "current_line": "#313244",
-  "search_match": "#f9e2af",
-  "search_current": "#a6e3a1",
-  "bookmark": "#89b4fa"
+  "background": "#222222",
+  "foreground": "#dbd7ca",
+  "selection": "#393a34",
+  "line_number": "#777777",
+  "current_line": "#2c2c2c",
+  "search_match": "#e6cc77",
+  "search_current": "#4d9375",
+  "bookmark": "#6394bf"
 }

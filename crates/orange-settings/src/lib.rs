@@ -73,8 +73,8 @@ mod tests {
     #[test]
     fn test_color_scheme_default() {
         let scheme = ColorScheme::default();
-        assert_eq!(scheme.background, "#1e1e2e");
-        assert_eq!(scheme.foreground, "#cdd6f4");
+        assert_eq!(scheme.background, "#222222");
+        assert_eq!(scheme.foreground, "#dbd7ca");
     }
 
     #[test]
@@ -88,6 +88,6 @@ mod tests {
         let restored: ColorScheme = toml::from_str(&toml_str).unwrap();
 
         assert_eq!(restored.background, "#000000");
-        assert_eq!(restored.foreground, "#cdd6f4"); // default
+        assert_eq!(restored.foreground, "#dbd7ca"); // default
     }
 }

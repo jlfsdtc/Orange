@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 /// Color scheme for the application.
 ///
 /// Field values must be hex strings of the form `#RRGGBB` or `#RRGGBBAA`.
-/// The defaults follow the Catppuccin palette (Mocha for dark, Latte for light).
+/// The default dark scheme is Vitesse Dark Soft (Warp-compatible);
+/// the light scheme is Catppuccin Latte.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ColorScheme {
@@ -24,24 +25,25 @@ pub struct ColorScheme {
 }
 
 impl Default for ColorScheme {
-    /// The default scheme is the dark scheme (Catppuccin Mocha).
+    /// The default scheme is the dark scheme (Vitesse Dark Soft).
     fn default() -> Self {
         Self::dark()
     }
 }
 
 impl ColorScheme {
-    /// Catppuccin Mocha — the canonical dark scheme.
+    /// Vitesse Dark Soft — the canonical dark scheme.
+    /// Mirrors the Warp theme of the same name by antfu.
     pub fn dark() -> Self {
         Self {
-            background: "#1e1e2e".to_string(),
-            foreground: "#cdd6f4".to_string(),
-            selection: "#45475a".to_string(),
-            line_number: "#6c7086".to_string(),
-            current_line: "#313244".to_string(),
-            search_match: "#f9e2af".to_string(),
-            search_current: "#a6e3a1".to_string(),
-            bookmark: "#89b4fa".to_string(),
+            background: "#222222".to_string(),
+            foreground: "#dbd7ca".to_string(),
+            selection: "#393a34".to_string(),
+            line_number: "#777777".to_string(),
+            current_line: "#2c2c2c".to_string(),
+            search_match: "#e6cc77".to_string(),
+            search_current: "#4d9375".to_string(),
+            bookmark: "#6394bf".to_string(),
         }
     }
 

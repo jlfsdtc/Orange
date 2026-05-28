@@ -13,14 +13,14 @@ use crate::highlighter::HighlighterSet;
 use crate::log_view::{LogViewEvent, LogViewState, ToggleTailMode};
 use crate::keymap::ApplyKeymap;
 use crate::options_dialog::{CloseOptions, OpenOptions, OptionsDialogEvent, OptionsDialogState};
-use crate::overview::OverviewState;
+use crate::overview::{MinimapEvent, OverviewState};
 use crate::predefined_filters::{PredefinedFiltersState, ToggleFilterPanel};
 use crate::quick_find::{
     CloseFind, FindNext, FindPrevious, QuickFindEvent, QuickFindState, ToggleQuickFind,
 };
 use crate::scratchpad::{ScratchpadState, ToggleScratchpad};
 use crate::session_widget::{LoadSession, SaveSession, SessionWidgetState};
-use crate::theme::{FontSettings, Theme};
+use crate::theme::{FontSettings, MinimapSettings, Theme};
 
 // Main window actions.
 actions!(
@@ -36,6 +36,7 @@ actions!(
         CloseTab,
         GoToLineDialog,
         ToggleTheme,
+        ToggleMinimap,
         IncreaseFontSize,
         DecreaseFontSize,
         ResetFontSize,
@@ -110,6 +111,7 @@ impl MainWindowState {
         // their `cx.observe_global::<Theme>` subscriptions resolve cleanly.
         cx.set_global(Theme::from_options_flag(options.dark_theme));
         cx.set_global(FontSettings::from_options(&options));
+        cx.set_global(MinimapSettings::from_options(&options));
 
         // Repaint MainWindow itself when the Theme global changes.
         cx.observe_global::<Theme>(|_, cx| cx.notify()).detach();
@@ -209,7 +211,8 @@ impl MainWindowState {
         // Create initial tab
         let log_view = cx.new(|cx| LogViewState::new(cx));
         let filtered = cx.new(|cx| FilteredViewState::new(cx));
-        let overview = cx.new(|_| OverviewState::new());
+        let overview = cx.new(OverviewState::new);
+        Self::subscribe_overview(&overview, cx);
 
         let tabs = vec![TabData {
             log_view,
@@ -254,6 +257,37 @@ impl MainWindowState {
             }
         })
         .detach();
+    }
+
+    /// Wire a minimap's ScrollTo events to the active tab's log view.
+    fn subscribe_overview(overview: &Entity<OverviewState>, cx: &mut Context<Self>) {
+        cx.subscribe(overview, |this, _, event, cx| match event {
+            MinimapEvent::ScrollTo(line) => {
+                let target = *line;
+                let log_view = this.tabs[this.active_tab].log_view.clone();
+                log_view.update(cx, |view, cx| {
+                    view.scroll_to_line(target, cx);
+                    view.select_line(Some(target), cx);
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// Toggle the minimap strip on every tab. Session-only — preference is
+    /// not persisted to disk, matching the existing `OverviewState` default.
+    pub fn toggle_minimap(
+        &mut self,
+        _action: &ToggleMinimap,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for tab in &self.tabs {
+            tab.overview.update(cx, |v, cx| v.toggle(cx));
+        }
+        self.quick_find
+            .update(cx, |qf, cx| qf.toggle_minimap(cx));
+        cx.notify();
     }
 
     /// Flip the application theme (dark ↔ light) and persist to disk.
@@ -516,8 +550,9 @@ impl MainWindowState {
         if active_has_file {
             let log_view = cx.new(|cx| LogViewState::new(cx));
             let filtered = cx.new(|cx| FilteredViewState::new(cx));
-            let overview = cx.new(|_| OverviewState::new());
+            let overview = cx.new(OverviewState::new);
             Self::subscribe_log_view(&log_view, cx);
+            Self::subscribe_overview(&overview, cx);
             self.tabs.push(TabData { log_view, filtered, overview });
             self.active_tab = self.tabs.len() - 1;
         }
@@ -559,8 +594,9 @@ impl MainWindowState {
         if self.tabs.len() == 1 {
             let log_view = cx.new(|cx| LogViewState::new(cx));
             let filtered = cx.new(|cx| FilteredViewState::new(cx));
-            let overview = cx.new(|_| OverviewState::new());
+            let overview = cx.new(OverviewState::new);
             Self::subscribe_log_view(&log_view, cx);
+            Self::subscribe_overview(&overview, cx);
             self.tabs[0] = TabData { log_view, filtered, overview };
             self.tab_bar.update(cx, |bar, _| bar.close_tab(closed_idx));
             self.quick_find.update(cx, |find, cx| find.set_log_data(None, cx));
@@ -904,7 +940,7 @@ impl Focusable for MainWindowState {
 }
 
 impl Render for MainWindowState {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.global::<Theme>();
         let font = cx.global::<FontSettings>().clone();
         let log_view = self.tabs[self.active_tab].log_view.clone();
@@ -933,7 +969,8 @@ impl Render for MainWindowState {
         });
 
         // Quick find bar
-        let find_bar = quick_find.update(cx, |find, cx| find.render_bar(theme, font, cx));
+        let find_bar =
+            quick_find.update(cx, |find, cx| find.render_bar(theme, font.clone(), window, cx));
 
         // Options dialog overlay
         let options_overlay = options_dialog.update(cx, |dlg, cx| dlg.render_dialog(theme, cx));
@@ -961,8 +998,30 @@ impl Render for MainWindowState {
         // Filtered view (if visible)
         let filtered_visible = filtered.update(cx, |v, _| v.is_visible());
 
-        // Overview
-        let overview_el = overview.update(cx, |v, _| v.render(theme));
+        // Overview minimap: push latest state (line totals, matches,
+        // bookmarks, viewport) so the strip stays in sync with the active
+        // tab, then render. Viewport height isn't directly available at this
+        // layer, so we approximate it from the window's content size; the
+        // minimap clamps to the strip's actual height anyway.
+        let total_lines = log_view.read(cx).total_lines();
+        let matches: Vec<u64> = self
+            .quick_find
+            .read(cx)
+            .matching_lines()
+            .to_vec();
+        let bookmarks: Vec<u64> = log_view.read(cx).bookmarks().to_vec();
+        let viewport_height_px = f32::from(window.viewport_size().height)
+            - /* approx chrome: tabs + status */ 60.0;
+        let (vp_start, vp_size) = log_view
+            .read(cx)
+            .viewport_lines(&font, viewport_height_px.max(0.0));
+        let overview_el = overview.update(cx, |v, cx| {
+            v.set_total_lines(total_lines, cx);
+            v.set_matches(matches, cx);
+            v.set_bookmarks(bookmarks, cx);
+            v.set_viewport(vp_start, vp_size, cx);
+            v.render(theme, window, cx)
+        });
 
         div()
             .key_context("MainWindow")
@@ -988,6 +1047,7 @@ impl Render for MainWindowState {
             .on_action(cx.listener(Self::go_to_line_dialog))
             .on_action(cx.listener(Self::toggle_filter_panel))
             .on_action(cx.listener(Self::toggle_theme))
+            .on_action(cx.listener(Self::toggle_minimap))
             .on_action(cx.listener(Self::increase_font_size))
             .on_action(cx.listener(Self::decrease_font_size))
             .on_action(cx.listener(Self::reset_font_size))
@@ -1031,7 +1091,7 @@ impl Render for MainWindowState {
                                     .bg(theme.selection),
                             )
                             .child(div().h(px(200.0)).child(filtered.update(cx, |v, cx| {
-                                v.render_view(_window, cx)
+                                v.render_view(window, cx)
                             })))
                             .into_any()
                     } else {

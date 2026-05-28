@@ -15,7 +15,7 @@ use orange_settings::{Keymap, Options};
 
 use crate::keymap::KNOWN_ACTIONS;
 use crate::main_window::ToggleTheme;
-use crate::theme::{FontSettings, Theme};
+use crate::theme::{FontSettings, MinimapSettings, Theme};
 
 // Actions for options dialog.
 actions!(orange, [OpenOptions, CloseOptions]);
@@ -40,6 +40,7 @@ enum EditField {
     Font,
     FontSize,
     OverviewContext,
+    MinimapWidth,
 }
 
 /// Sidebar tabs in the options dialog.
@@ -224,6 +225,11 @@ impl OptionsDialogState {
                         s.pop();
                         self.options.overview_context = s.parse::<u32>().unwrap_or(0);
                     }
+                    EditField::MinimapWidth => {
+                        let mut s = (self.options.minimap_width as u32).to_string();
+                        s.pop();
+                        self.options.minimap_width = s.parse::<u32>().unwrap_or(0) as f32;
+                    }
                 }
                 cx.notify();
             }
@@ -264,6 +270,18 @@ impl OptionsDialogState {
                             s.push_str(ch);
                             self.options.overview_context =
                                 s.parse::<u32>().unwrap_or(self.options.overview_context);
+                        }
+                    }
+                    EditField::MinimapWidth => {
+                        if ch.chars().all(|c| c.is_ascii_digit()) {
+                            let current = self.options.minimap_width as u32;
+                            let mut s = current.to_string();
+                            if current == 0 {
+                                s.clear();
+                            }
+                            s.push_str(ch);
+                            self.options.minimap_width =
+                                s.parse::<u32>().unwrap_or(current) as f32;
                         }
                     }
                 }
@@ -399,6 +417,7 @@ impl OptionsDialogState {
         let font = self.options.main_font.clone();
         let font_size = self.options.main_font_size;
         let overview = self.options.overview_context;
+        let minimap_width = self.options.minimap_width;
         let focused = self.focused_field;
 
         div()
@@ -436,6 +455,14 @@ impl OptionsDialogState {
                 EditField::OverviewContext,
                 overview as i64,
                 focused == Some(EditField::OverviewContext),
+                theme,
+                cx,
+            ))
+            .child(self.render_number_row(
+                "Minimap Width",
+                EditField::MinimapWidth,
+                minimap_width as u32 as i64,
+                focused == Some(EditField::MinimapWidth),
                 theme,
                 cx,
             ))
@@ -505,6 +532,13 @@ impl OptionsDialogState {
                     .text_color(theme.background)
                     .cursor_pointer()
                     .on_click(cx.listener(|this, _event, _window, cx| {
+                        // Clamp the minimap width before persisting so an
+                        // out-of-range value typed in the dialog is normalized
+                        // on disk too.
+                        this.options.minimap_width = this
+                            .options
+                            .minimap_width
+                            .clamp(MinimapSettings::MIN, MinimapSettings::MAX);
                         if let Err(e) = this.save() {
                             tracing::warn!("failed to save options: {e}");
                         }
@@ -512,6 +546,7 @@ impl OptionsDialogState {
                             tracing::warn!("failed to save keymap: {e}");
                         }
                         cx.set_global(FontSettings::from_options(&this.options));
+                        cx.set_global(MinimapSettings::from_options(&this.options));
                         cx.emit(OptionsDialogEvent::KeymapSaved);
                         this.close(cx);
                     }))

@@ -137,6 +137,29 @@ impl FontSettings {
     }
 }
 
+/// Minimap strip width. Stored as a GPUI global so the overview repaints
+/// immediately when the user edits the value in the Options dialog —
+/// same pattern as `FontSettings`.
+#[derive(Clone, Copy, Debug)]
+pub struct MinimapSettings {
+    pub width: Pixels,
+}
+
+impl Global for MinimapSettings {}
+
+impl MinimapSettings {
+    pub const MIN: f32 = 24.0;
+    pub const MAX: f32 = 128.0;
+    pub const DEFAULT: f32 = 48.0;
+
+    /// Build from persisted Options, clamping out-of-range values.
+    pub fn from_options(options: &Options) -> Self {
+        Self {
+            width: px(options.minimap_width.clamp(Self::MIN, Self::MAX)),
+        }
+    }
+}
+
 // Unit tests live under `tests/theme.rs` as an integration test because the
 // crate-level recursion limit (set deliberately low to bound macro-resolution
 // time) does not allow `cargo test --lib` to compile the deeply-nested GPUI

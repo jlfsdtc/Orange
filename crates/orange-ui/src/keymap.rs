@@ -42,6 +42,7 @@ fn spec_to_binding(spec: &KeyBindingSpec) -> Option<KeyBinding> {
         "LineDown" => Some(KeyBinding::new(key, main_window::LineDown, None)),
         "GoToLineDialog" => Some(KeyBinding::new(key, main_window::GoToLineDialog, None)),
         "ToggleTheme" => Some(KeyBinding::new(key, main_window::ToggleTheme, None)),
+        "ToggleMinimap" => Some(KeyBinding::new(key, main_window::ToggleMinimap, None)),
         "IncreaseFontSize" => {
             Some(KeyBinding::new(key, main_window::IncreaseFontSize, None))
         }
@@ -101,6 +102,7 @@ pub const KNOWN_ACTIONS: &[&str] = &[
     "LineDown",
     "GoToLineDialog",
     "ToggleTheme",
+    "ToggleMinimap",
     "IncreaseFontSize",
     "DecreaseFontSize",
     "ResetFontSize",

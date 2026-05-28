@@ -162,6 +162,7 @@ fn common_bindings() -> Vec<KeyBindingSpec> {
         KeyBindingSpec::new("secondary-l", "GoToLineDialog"),
         KeyBindingSpec::new("secondary-shift-p", "ToggleFilterPanel"),
         KeyBindingSpec::new("secondary-shift-t", "ToggleTheme"),
+        KeyBindingSpec::new("secondary-shift-m", "ToggleMinimap"),
         KeyBindingSpec::new("secondary-shift-s", "ToggleScratchpad"),
         KeyBindingSpec::new("secondary-shift-d", "SaveSession"),
         KeyBindingSpec::new("secondary-shift-o", "LoadSession"),
