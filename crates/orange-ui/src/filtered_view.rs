@@ -8,6 +8,7 @@ use orange_core::LogData;
 use orange_regex::RegexFlags;
 use std::sync::Arc;
 
+use crate::h_scrollbar::{self, HScrollState};
 use crate::theme::{FontSettings, Theme};
 
 // Actions for filtered view.
@@ -29,6 +30,10 @@ pub struct FilteredViewState {
     pattern: String,
     /// Scroll handle.
     scroll_handle: UniformListScrollHandle,
+    /// Horizontal scroll state. Sized from the source file's longest line, so
+    /// the bar is stable regardless of which matches are shown. The gutter
+    /// stays fixed while line content scrolls sideways.
+    h_scroll: HScrollState,
 }
 
 impl FilteredViewState {
@@ -43,6 +48,7 @@ impl FilteredViewState {
             visible: false,
             pattern: String::new(),
             scroll_handle: UniformListScrollHandle::default(),
+            h_scroll: HScrollState::new(),
         }
     }
 
@@ -180,6 +186,17 @@ impl FilteredViewState {
         let char_advance = f32::from(font_size) * 0.6;
         let gutter_width = gutter_digits as f32 * char_advance + 16.0 + 1.0;
 
+        // Horizontal scroll, sized from the source file's longest line (a byte
+        // count, slightly over-estimating multi-byte UTF-8 width). The content
+        // of each row is shifted left by `h_offset`; the gutter stays fixed.
+        let h_offset = self.h_scroll.offset();
+        let content_w = self
+            .log_data
+            .as_ref()
+            .map(|d| d.max_line_length())
+            .unwrap_or(0) as f32
+            * char_advance;
+
         // Header
         let header = div()
             .flex()
@@ -252,10 +269,21 @@ impl FilteredViewState {
                                         )),
                                 )
                                 .child(
+                                    // Clip the content and shift it left by the
+                                    // horizontal offset; the gutter stays put.
+                                    // The inner div is sized to the full content
+                                    // width so it doesn't collapse under flex.
                                     div()
                                         .flex_grow()
-                                        .text_color(theme.foreground)
-                                        .child(line_text),
+                                        .overflow_hidden()
+                                        .child(
+                                            div()
+                                                .w(px(content_w))
+                                                .ml(px(-h_offset))
+                                                .whitespace_nowrap()
+                                                .text_color(theme.foreground)
+                                                .child(line_text),
+                                        ),
                                 )
                                 .into_any()
                         })
@@ -267,13 +295,46 @@ impl FilteredViewState {
             .into_any()
         };
 
+        let entity_wheel = cx.entity();
+        let scrollbar = h_scrollbar::render(
+            &mut self.h_scroll,
+            |this: &mut FilteredViewState| &mut this.h_scroll,
+            content_w,
+            gutter_width,
+            theme,
+            cx,
+        );
+
         div()
             .flex()
             .flex_col()
             .size_full()
             .bg(theme.background)
             .child(header)
-            .child(list)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_grow()
+                    .overflow_hidden()
+                    .child(list)
+                    .on_scroll_wheel(move |event, _window, cx| {
+                        let delta = event.delta.pixel_delta(line_height);
+                        let dx = if event.shift {
+                            f32::from(delta.y)
+                        } else {
+                            f32::from(delta.x)
+                        };
+                        if dx != 0.0 {
+                            entity_wheel.update(cx, |this, cx| {
+                                if this.h_scroll.scroll_by(-dx, content_w) {
+                                    cx.notify();
+                                }
+                            });
+                        }
+                    }),
+            )
+            .child(scrollbar)
             .into_any()
     }
 }

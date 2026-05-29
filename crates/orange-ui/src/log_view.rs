@@ -7,6 +7,7 @@ use gpui::*;
 use orange_core::LogData;
 use std::sync::Arc;
 
+use crate::h_scrollbar::{self, HScrollState};
 use crate::theme::{FontSettings, Theme};
 
 // Actions for log view.
@@ -156,6 +157,10 @@ pub struct LogViewState {
     /// right-clicking on an unselected row copies that row without disturbing
     /// any prior selection the user had.
     right_click_line: Option<u64>,
+    /// Horizontal scroll state. The content of each row is shifted left by
+    /// `h_scroll.offset()` so very long lines can be scrolled into view; the
+    /// line-number gutter stays fixed.
+    h_scroll: HScrollState,
 }
 
 impl LogViewState {
@@ -171,6 +176,7 @@ impl LogViewState {
             tail_mode: false,
             pending_click: None,
             right_click_line: None,
+            h_scroll: HScrollState::new(),
         }
     }
 
@@ -452,7 +458,19 @@ impl Render for LogViewState {
         let gutter_width = gutter_digits as f32 * char_advance + 16.0 + 1.0;
         let entity = cx.entity();
 
-        uniform_list(
+        // Horizontal scroll: total content width is the longest line (in bytes,
+        // an over-estimate for multi-byte UTF-8 — fine for scrollbar sizing)
+        // times the monospace advance. The content of each row is shifted left
+        // by `h_offset`; the gutter is excluded so line numbers stay put.
+        let h_offset = self.h_scroll.offset();
+        let max_line_len = self
+            .log_data
+            .as_ref()
+            .map(|d| d.max_line_length())
+            .unwrap_or(0);
+        let content_w = max_line_len as f32 * char_advance;
+
+        let list = uniform_list(
             "log_lines",
             total,
             move |range, _window, _cx| {
@@ -496,6 +514,7 @@ impl Render for LogViewState {
                                     f32::from(event.position.x),
                                     gutter_width,
                                     char_advance,
+                                    h_offset,
                                     down_text.chars().count(),
                                 );
                                 down_entity.update(cx, |this, cx| {
@@ -517,6 +536,7 @@ impl Render for LogViewState {
                                     f32::from(event.position.x),
                                     gutter_width,
                                     char_advance,
+                                    h_offset,
                                     move_text.chars().count(),
                                 );
                                 move_entity.update(cx, |this, cx| {
@@ -545,15 +565,72 @@ impl Render for LogViewState {
                                         width = gutter_digits
                                     )),
                             )
-                            .child(render_line_content(&line_text, highlight, theme))
+                            .child(
+                                // Clip the content to the row and shift it left
+                                // by the horizontal offset so the gutter (above)
+                                // stays put while long lines scroll. The inner
+                                // div is sized to the full content width so it
+                                // doesn't collapse under the flex parent.
+                                div()
+                                    .flex_grow()
+                                    .overflow_hidden()
+                                    .child(
+                                        div()
+                                            .w(px(content_w))
+                                            .ml(px(-h_offset))
+                                            .whitespace_nowrap()
+                                            .child(render_line_content(
+                                                &line_text, highlight, theme,
+                                            )),
+                                    ),
+                            )
                             .into_any()
                     })
                     .collect()
             },
         )
         .track_scroll(self.scroll_handle.clone())
-        .size_full()
-        .into_any()
+        .flex_grow();
+
+        let entity_wheel = cx.entity();
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_grow()
+                    .overflow_hidden()
+                    .child(list)
+                    // Shift+wheel (or a horizontal trackpad gesture) scrolls the
+                    // content sideways.
+                    .on_scroll_wheel(move |event, _window, cx| {
+                        let delta = event.delta.pixel_delta(line_height);
+                        let dx = if event.shift {
+                            f32::from(delta.y)
+                        } else {
+                            f32::from(delta.x)
+                        };
+                        if dx != 0.0 {
+                            entity_wheel.update(cx, |this, cx| {
+                                if this.h_scroll.scroll_by(-dx, content_w) {
+                                    cx.notify();
+                                }
+                            });
+                        }
+                    }),
+            )
+            .child(h_scrollbar::render(
+                &mut self.h_scroll,
+                |this: &mut LogViewState| &mut this.h_scroll,
+                content_w,
+                gutter_width,
+                theme,
+                cx,
+            ))
+            .into_any()
     }
 }
 
@@ -638,11 +715,19 @@ fn char_advance_for(font_size: Pixels) -> f32 {
     f32::from(font_size) * 0.6
 }
 
-fn column_for_x(window_x: f32, gutter_width: f32, char_advance: f32, line_char_len: usize) -> usize {
+fn column_for_x(
+    window_x: f32,
+    gutter_width: f32,
+    char_advance: f32,
+    h_offset: f32,
+    line_char_len: usize,
+) -> usize {
     if char_advance <= 0.0 {
         return 0;
     }
-    let local = window_x - gutter_width;
+    // Add the horizontal scroll offset so hit-testing maps to the character
+    // actually under the cursor when the content is scrolled sideways.
+    let local = window_x - gutter_width + h_offset;
     if local <= 0.0 {
         return 0;
     }

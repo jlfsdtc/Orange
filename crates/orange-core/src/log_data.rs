@@ -30,6 +30,11 @@ pub struct LogData {
     digest: FileDigest,
     /// Encoding of the file (detected or assumed UTF-8).
     encoding: &'static encoding_rs::Encoding,
+    /// Length in bytes of the longest line (including its trailing newline).
+    /// Used to size the horizontal scrollbar. This is a byte count, so it
+    /// slightly over-estimates display width for multi-byte UTF-8 text — which
+    /// is fine for scrollbar sizing.
+    max_line_length: u64,
 }
 
 impl LogData {
@@ -43,6 +48,11 @@ impl LogData {
         indexing_data.start();
 
         let mut line_positions = CompressedLineStorage::new();
+        // Track the longest line as the largest gap between consecutive line
+        // ends. Positions are absolute, so a single running cursor works across
+        // block boundaries.
+        let mut max_line_length = 0u64;
+        let mut prev_line_end = 0u64;
 
         // Detect encoding from first block
         let mut file = File::open(path)?;
@@ -67,6 +77,11 @@ impl LogData {
             let block = &buffer[..bytes_read];
             let line_ends = find_line_ends(block, file_offset);
 
+            for &end in &line_ends {
+                max_line_length = max_line_length.max(end - prev_line_end);
+                prev_line_end = end;
+            }
+
             if !line_ends.is_empty() {
                 line_positions.append(&line_ends);
             }
@@ -80,6 +95,7 @@ impl LogData {
         if file_size > 0 {
             let last_pos = line_positions.get_position(line_positions.len().saturating_sub(1));
             if last_pos != Some(file_size) {
+                max_line_length = max_line_length.max(file_size - prev_line_end);
                 line_positions.append(&[file_size]);
             }
         }
@@ -93,12 +109,19 @@ impl LogData {
             file_size,
             digest,
             encoding,
+            max_line_length,
         })
     }
 
     /// Get the total number of lines.
     pub fn line_count(&self) -> u64 {
         self.line_positions.len()
+    }
+
+    /// Length in bytes of the longest line (including its trailing newline).
+    /// Used to size the horizontal scrollbar.
+    pub fn max_line_length(&self) -> u64 {
+        self.max_line_length
     }
 
     /// Get the content of a specific line (0-indexed).
@@ -211,6 +234,9 @@ impl LogData {
         let mut reader = BufReader::with_capacity(INDEX_BLOCK_SIZE, file);
         let mut buffer = vec![0u8; INDEX_BLOCK_SIZE];
         let mut offset = self.file_size;
+        // Continue measuring line lengths from the previous indexed end so the
+        // first appended line is sized correctly.
+        let mut prev_line_end = self.file_size;
 
         loop {
             let bytes_read = reader.read(&mut buffer)?;
@@ -220,6 +246,11 @@ impl LogData {
 
             let block = &buffer[..bytes_read];
             let line_ends = find_line_ends(block, offset);
+
+            for &end in &line_ends {
+                self.max_line_length = self.max_line_length.max(end - prev_line_end);
+                prev_line_end = end;
+            }
 
             if !line_ends.is_empty() {
                 self.line_positions.append(&line_ends);
@@ -233,6 +264,7 @@ impl LogData {
         if new_size > 0 {
             let last = self.line_positions.get_position(self.line_positions.len() - 1);
             if last != Some(new_size) {
+                self.max_line_length = self.max_line_length.max(new_size - prev_line_end);
                 self.line_positions.append(&[new_size]);
             }
         }
@@ -393,6 +425,36 @@ mod tests {
         assert_eq!(data.line_count(), 10000);
         assert_eq!(data.get_line(0), Some(b"line 0".to_vec()));
         assert_eq!(data.get_line(9999), Some(b"line 9999".to_vec()));
+    }
+
+    #[test]
+    fn test_max_line_length() {
+        // Longest line is "aaaaaaaa" (8 bytes) + '\n' = 9.
+        let content = b"a\nbb\naaaaaaaa\ncc\n";
+        let file = create_test_file(content);
+        let data = LogData::open(file.path()).unwrap();
+        assert_eq!(data.max_line_length(), 9);
+    }
+
+    #[test]
+    fn test_max_line_length_no_trailing_newline() {
+        // Last line has no newline: "longest_here" is 12 bytes.
+        let content = b"short\nlongest_here";
+        let file = create_test_file(content);
+        let data = LogData::open(file.path()).unwrap();
+        assert_eq!(data.max_line_length(), 12);
+    }
+
+    #[test]
+    fn test_max_line_length_after_reindex() {
+        let mut file = create_test_file(b"a\nbb\n");
+        let mut data = LogData::open(file.path()).unwrap();
+        assert_eq!(data.max_line_length(), 3); // "bb\n"
+
+        file.write_all(b"cccccccc\n").unwrap();
+        file.flush().unwrap();
+        data.reindex_from_current_end().unwrap();
+        assert_eq!(data.max_line_length(), 9); // "cccccccc\n"
     }
 
     #[test]

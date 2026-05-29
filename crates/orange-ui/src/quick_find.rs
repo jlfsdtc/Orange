@@ -11,6 +11,7 @@ use orange_core::LogData;
 use orange_regex::{RegexEngine, RegexFlags};
 use std::sync::Arc;
 
+use crate::h_scrollbar::{self, HScrollState};
 use crate::overview::{MinimapEvent, OverviewState};
 use crate::theme::{FontSettings, Theme};
 
@@ -73,6 +74,10 @@ pub struct QuickFindState {
     /// counts (matches) come from `matching_lines`; its viewport reflects
     /// which results are currently visible in the panel.
     minimap: Entity<OverviewState>,
+    /// Horizontal scroll state for the results list. Sized from the source
+    /// file's longest line so the bar is stable regardless of which matches
+    /// are shown; the gutter stays fixed while line content scrolls sideways.
+    h_scroll: HScrollState,
 }
 
 const PANEL_MIN_PX: f32 = 60.0;
@@ -113,6 +118,7 @@ impl QuickFindState {
             panel_height: px(PANEL_DEFAULT_PX),
             resize_anchor: None,
             minimap,
+            h_scroll: HScrollState::new(),
         }
     }
 
@@ -777,7 +783,7 @@ impl QuickFindState {
     /// same as the file content view, with the query highlighted inline and
     /// the current match's row tinted like a LogView selection.
     fn build_results_panel(
-        &self,
+        &mut self,
         theme: Theme,
         font: FontSettings,
         window: &mut Window,
@@ -801,6 +807,11 @@ impl QuickFindState {
         let gutter_digits = digits_for(max_line + 1);
         let char_advance = f32::from(font_size) * 0.6;
         let gutter_width = gutter_digits as f32 * char_advance + 16.0 + 1.0;
+        // Horizontal scroll, sized from the source file's longest line (a byte
+        // count, slightly over-estimating multi-byte UTF-8 width). The content
+        // of each row is shifted left by `h_offset`; the gutter stays fixed.
+        let h_offset = self.h_scroll.offset();
+        let content_w = data.max_line_length() as f32 * char_advance;
         let entity = cx.entity();
         let total = matching.len();
         // User-resizable height (see `resize_anchor` and the drag handle in
@@ -889,15 +900,42 @@ impl QuickFindState {
                                         width = gutter_digits
                                     )),
                             )
-                            .child(render_result_line(&line_text, &ranges, theme))
+                            .child(
+                                // Clip the content and shift it left by the
+                                // horizontal offset; the gutter stays put. The
+                                // inner div is sized to the full content width
+                                // so it doesn't collapse under flex.
+                                div()
+                                    .flex_grow()
+                                    .overflow_hidden()
+                                    .child(
+                                        div()
+                                            .w(px(content_w))
+                                            .ml(px(-h_offset))
+                                            .whitespace_nowrap()
+                                            .child(render_result_line(
+                                                &line_text, &ranges, theme,
+                                            )),
+                                    ),
+                            )
                             .into_any()
                     })
                     .collect()
             },
         )
         .track_scroll(self.results_scroll.clone())
-        .h(panel_height)
+        .flex_grow()
         .w_full();
+
+        let entity_wheel = cx.entity();
+        let scrollbar = h_scrollbar::render(
+            &mut self.h_scroll,
+            |this: &mut QuickFindState| &mut this.h_scroll,
+            content_w,
+            gutter_width,
+            theme,
+            cx,
+        );
 
         Some(
             div()
@@ -911,7 +949,41 @@ impl QuickFindState {
                         .flex()
                         .flex_row()
                         .size_full()
-                        .child(div().flex_grow().child(list))
+                        // List column: results stacked above the horizontal
+                        // scrollbar; the minimap sits to the right.
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_grow()
+                                .overflow_hidden()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .flex_grow()
+                                        .overflow_hidden()
+                                        .child(list)
+                                        // Shift+wheel / horizontal trackpad
+                                        // gesture scrolls the content sideways.
+                                        .on_scroll_wheel(move |event, _window, cx| {
+                                            let delta = event.delta.pixel_delta(line_height);
+                                            let dx = if event.shift {
+                                                f32::from(delta.y)
+                                            } else {
+                                                f32::from(delta.x)
+                                            };
+                                            if dx != 0.0 {
+                                                entity_wheel.update(cx, |this, cx| {
+                                                    if this.h_scroll.scroll_by(-dx, content_w) {
+                                                        cx.notify();
+                                                    }
+                                                });
+                                            }
+                                        }),
+                                )
+                                .child(scrollbar),
+                        )
                         .child(minimap_el),
                 )
                 .into_any(),

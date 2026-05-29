@@ -16,6 +16,7 @@ pub mod main_window;
 pub mod log_view;
 pub mod filtered_view;
 pub mod overview;
+pub mod h_scrollbar;
 pub mod highlighter;
 pub mod keymap;
 pub mod quick_find;
