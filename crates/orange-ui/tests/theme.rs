@@ -1,6 +1,6 @@
 //! Integration tests for the Theme module.
 
-use orange_settings::ColorScheme;
+use orange_settings::{ColorScheme, Options};
 use orange_ui::theme::{parse_hex_color, Theme};
 
 #[test]
@@ -41,6 +41,29 @@ fn from_options_flag_picks_dark_when_true() {
     let dark = Theme::from_options_flag(true);
     let light = Theme::from_options_flag(false);
     assert!(dark.background.l < light.background.l);
+}
+
+#[test]
+fn from_options_uses_active_custom_scheme() {
+    let mut opts = Options::default();
+    opts.dark_theme = false;
+    opts.custom_light.background = "#123456".to_string();
+
+    let theme = Theme::from_options(&opts);
+    let expected = parse_hex_color("#123456").unwrap();
+    assert_eq!(theme.background, expected);
+}
+
+#[test]
+fn from_options_falls_back_to_builtin_on_invalid_hex() {
+    let mut opts = Options::default();
+    opts.dark_theme = true;
+    // Half-typed value as the user would have mid-edit in the Theme tab.
+    opts.custom_dark.background = "#12".to_string();
+
+    let theme = Theme::from_options(&opts);
+    // Should not panic; falls back to the built-in dark scheme.
+    assert_eq!(theme.background, Theme::dark().background);
 }
 
 #[test]

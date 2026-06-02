@@ -40,6 +40,34 @@ mod tests {
     }
 
     #[test]
+    fn test_active_scheme_follows_dark_flag() {
+        let mut opts = Options::default();
+        opts.custom_dark.background = "#101010".to_string();
+        opts.custom_light.background = "#fafafa".to_string();
+
+        opts.dark_theme = true;
+        assert_eq!(opts.active_scheme().background, "#101010");
+        opts.dark_theme = false;
+        assert_eq!(opts.active_scheme().background, "#fafafa");
+
+        // Mutable access targets the active scheme too.
+        opts.active_scheme_mut().background = "#000000".to_string();
+        assert_eq!(opts.custom_light.background, "#000000");
+    }
+
+    #[test]
+    fn test_custom_schemes_roundtrip_toml() {
+        let mut opts = Options::default();
+        opts.custom_dark.foreground = "#abcdef".to_string();
+
+        let toml_str = toml::to_string_pretty(&opts).unwrap();
+        let restored: Options = toml::from_str(&toml_str).unwrap();
+        assert_eq!(restored.custom_dark.foreground, "#abcdef");
+        // Untouched fields keep their defaults.
+        assert_eq!(restored.custom_light.background, ColorScheme::light().background);
+    }
+
+    #[test]
     fn test_options_partial_toml() {
         // Loading partial TOML should fill in defaults for missing fields
         let toml_str = r#"main_font = "Monaco""#;

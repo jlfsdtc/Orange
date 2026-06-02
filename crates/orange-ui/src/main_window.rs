@@ -109,7 +109,7 @@ impl MainWindowState {
 
         // Install the Theme global before any child Entity is constructed so
         // their `cx.observe_global::<Theme>` subscriptions resolve cleanly.
-        cx.set_global(Theme::from_options_flag(options.dark_theme));
+        cx.set_global(Theme::from_options(&options));
         cx.set_global(FontSettings::from_options(&options));
         cx.set_global(MinimapSettings::from_options(&options));
 
@@ -197,8 +197,20 @@ impl MainWindowState {
             &options_dialog,
             window,
             |this: &mut Self, _dialog, event, window, cx| match event {
-                OptionsDialogEvent::KeymapSaved => cx.dispatch_action(&ApplyKeymap),
-                OptionsDialogEvent::Closed => window.focus(&this.focus_handle),
+                OptionsDialogEvent::KeymapSaved => {
+                    cx.dispatch_action(&ApplyKeymap);
+                    // The dialog persisted its edits to disk. Re-read them into
+                    // our authoritative copy so the committed theme sticks and a
+                    // later Cancel reverts to these values rather than stale ones.
+                    this.options = orange_settings::Options::load().unwrap_or_default();
+                    cx.set_global(Theme::from_options(&this.options));
+                }
+                OptionsDialogEvent::Closed => {
+                    window.focus(&this.focus_handle);
+                    // Discard any live theme preview the dialog applied while
+                    // open — reverting to our last-committed scheme.
+                    cx.set_global(Theme::from_options(&this.options));
+                }
             },
         )
         .detach();
@@ -298,7 +310,7 @@ impl MainWindowState {
         cx: &mut Context<Self>,
     ) {
         self.options.dark_theme = !self.options.dark_theme;
-        cx.set_global(Theme::from_options_flag(self.options.dark_theme));
+        cx.set_global(Theme::from_options(&self.options));
         if let Err(e) = self.options.save() {
             tracing::warn!("failed to persist options after theme toggle: {e}");
             self.status = format!("Theme toggled (save failed: {e})");

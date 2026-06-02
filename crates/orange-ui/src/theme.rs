@@ -95,6 +95,15 @@ impl Theme {
             Self::light()
         }
     }
+
+    /// Build the theme from the user's active (possibly customized) color
+    /// scheme. Falls back to the matching built-in if the scheme contains an
+    /// invalid hex string — this keeps live preview safe while the user is
+    /// still typing a partial `#RRGGBB` value in the Settings "Theme" tab.
+    pub fn from_options(options: &Options) -> Self {
+        Self::from_color_scheme(options.active_scheme())
+            .unwrap_or_else(|_| Self::from_options_flag(options.dark_theme))
+    }
 }
 
 /// Font size and family for log-content text. Stored as a GPUI global so
@@ -102,10 +111,11 @@ impl Theme {
 /// `cx.observe_global::<FontSettings>(...)` to repaint when the user changes
 /// the size or family at runtime.
 ///
-/// `family` is what we actually apply via `.font_family(...)` to the log
-/// rows — without that, GPUI renders with its default proportional font and
-/// the `column_for_x` hit-test (which assumes a fixed monospace advance)
-/// drifts further per character.
+/// `family` is what we actually apply via `.font_family(...)` to both the log
+/// rows and the filtered/search-results rows, so the Options "Font" field
+/// drives both panes from one setting. Without it, GPUI falls back to its
+/// default proportional font (`.SystemUIFont`) and the `column_for_x` hit-test
+/// (which assumes a fixed monospace advance) drifts further per character.
 #[derive(Clone, Debug)]
 pub struct FontSettings {
     pub size: Pixels,

@@ -173,6 +173,7 @@ impl FilteredViewState {
         let font = cx.global::<FontSettings>().clone();
         let line_height = font.line_height();
         let font_size = font.size;
+        let font_family = font.family.clone();
         let current_index = self.current_index;
         let matching_lines = self.matching_lines.clone();
         let log_data = self.log_data.clone();
@@ -257,6 +258,7 @@ impl FilteredViewState {
                                 .bg(bg)
                                 .w_full()
                                 .text_size(font_size)
+                                .font_family(font_family.clone())
                                 .child(
                                     div()
                                         .w(px(gutter_width))

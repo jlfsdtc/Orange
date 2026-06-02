@@ -799,6 +799,7 @@ impl QuickFindState {
         let current = self.current_match;
         let line_height = font.line_height();
         let font_size = font.size;
+        let font_family = font.family.clone();
         // Size the gutter for the largest line number in the result set so
         // every row stays aligned even on huge files. Use the live font
         // advance (0.6 × font size, matching log_view::char_advance_for) so
@@ -884,6 +885,7 @@ impl QuickFindState {
                             .bg(row_bg)
                             .w_full()
                             .text_size(font_size)
+                            .font_family(font_family.clone())
                             .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
                                 click_entity.update(cx, |this, cx| {
                                     this.select_match(i, cx);

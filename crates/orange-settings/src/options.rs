@@ -1,5 +1,6 @@
 //! Application options and configuration persistence.
 
+use crate::style::ColorScheme;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -25,6 +26,12 @@ pub struct Options {
     pub max_recent_files: usize,
     /// Whether to use dark theme.
     pub dark_theme: bool,
+    /// User-customizable color scheme used when `dark_theme` is true. Seeded
+    /// from the built-in dark scheme; edited in the Settings "Theme" tab.
+    pub custom_dark: ColorScheme,
+    /// User-customizable color scheme used when `dark_theme` is false. Seeded
+    /// from the built-in light scheme.
+    pub custom_light: ColorScheme,
 }
 
 impl Default for Options {
@@ -39,11 +46,33 @@ impl Default for Options {
             minimap_width: 48.0,
             max_recent_files: 20,
             dark_theme: true,
+            custom_dark: ColorScheme::dark(),
+            custom_light: ColorScheme::light(),
         }
     }
 }
 
 impl Options {
+    /// The color scheme that should currently be applied, picked by the
+    /// `dark_theme` flag. The Settings "Theme" tab edits whichever one this
+    /// returns.
+    pub fn active_scheme(&self) -> &ColorScheme {
+        if self.dark_theme {
+            &self.custom_dark
+        } else {
+            &self.custom_light
+        }
+    }
+
+    /// Mutable access to the currently-active scheme, for in-place edits.
+    pub fn active_scheme_mut(&mut self) -> &mut ColorScheme {
+        if self.dark_theme {
+            &mut self.custom_dark
+        } else {
+            &mut self.custom_light
+        }
+    }
+
     /// Load options from the config file.
     pub fn load() -> anyhow::Result<Self> {
         let path = Self::config_path();

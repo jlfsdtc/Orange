@@ -11,11 +11,10 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use orange_settings::{Keymap, Options};
+use orange_settings::{ColorScheme, Keymap, Options};
 
 use crate::keymap::KNOWN_ACTIONS;
-use crate::main_window::ToggleTheme;
-use crate::theme::{FontSettings, MinimapSettings, Theme};
+use crate::theme::{parse_hex_color, FontSettings, MinimapSettings, Theme};
 
 // Actions for options dialog.
 actions!(orange, [OpenOptions, CloseOptions]);
@@ -41,12 +40,91 @@ enum EditField {
     FontSize,
     OverviewContext,
     MinimapWidth,
+    /// A hex color field on the Theme tab.
+    Color(ColorKey),
 }
+
+/// One of the eight editable colors in a `ColorScheme`. Used both to route
+/// keystrokes to the right field and to render the Theme tab's color rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ColorKey {
+    Background,
+    Foreground,
+    Selection,
+    LineNumber,
+    CurrentLine,
+    SearchMatch,
+    SearchCurrent,
+    Bookmark,
+}
+
+impl ColorKey {
+    /// Read this key's hex string out of a scheme.
+    fn get(self, scheme: &ColorScheme) -> &String {
+        match self {
+            ColorKey::Background => &scheme.background,
+            ColorKey::Foreground => &scheme.foreground,
+            ColorKey::Selection => &scheme.selection,
+            ColorKey::LineNumber => &scheme.line_number,
+            ColorKey::CurrentLine => &scheme.current_line,
+            ColorKey::SearchMatch => &scheme.search_match,
+            ColorKey::SearchCurrent => &scheme.search_current,
+            ColorKey::Bookmark => &scheme.bookmark,
+        }
+    }
+
+    /// Mutable handle to this key's hex string within a scheme.
+    fn get_mut(self, scheme: &mut ColorScheme) -> &mut String {
+        match self {
+            ColorKey::Background => &mut scheme.background,
+            ColorKey::Foreground => &mut scheme.foreground,
+            ColorKey::Selection => &mut scheme.selection,
+            ColorKey::LineNumber => &mut scheme.line_number,
+            ColorKey::CurrentLine => &mut scheme.current_line,
+            ColorKey::SearchMatch => &mut scheme.search_match,
+            ColorKey::SearchCurrent => &mut scheme.search_current,
+            ColorKey::Bookmark => &mut scheme.bookmark,
+        }
+    }
+
+    /// Stable identifier fragment for element ids.
+    fn id(self) -> &'static str {
+        match self {
+            ColorKey::Background => "background",
+            ColorKey::Foreground => "foreground",
+            ColorKey::Selection => "selection",
+            ColorKey::LineNumber => "line-number",
+            ColorKey::CurrentLine => "current-line",
+            ColorKey::SearchMatch => "search-match",
+            ColorKey::SearchCurrent => "search-current",
+            ColorKey::Bookmark => "bookmark",
+        }
+    }
+}
+
+/// Label + key for each editable color, in display order.
+const COLOR_FIELDS: &[(&str, ColorKey)] = &[
+    ("Background", ColorKey::Background),
+    ("Foreground", ColorKey::Foreground),
+    ("Selection", ColorKey::Selection),
+    ("Line Number", ColorKey::LineNumber),
+    ("Current Line", ColorKey::CurrentLine),
+    ("Search Match", ColorKey::SearchMatch),
+    ("Search Current", ColorKey::SearchCurrent),
+    ("Bookmark", ColorKey::Bookmark),
+];
+
+/// Quick-pick palette shown beside the focused color row.
+const PRESET_SWATCHES: &[&str] = &[
+    "#222222", "#eff1f5", "#dbd7ca", "#4c4f69", "#393a34", "#bcc0cc", "#777777",
+    "#e6cc77", "#4d9375", "#6394bf", "#df8e1d", "#40a02b", "#1e66f5", "#d20f39",
+];
 
 /// Sidebar tabs in the options dialog.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OptionsTab {
     General,
+    Theme,
     Shortcuts,
 }
 
@@ -54,6 +132,7 @@ impl OptionsTab {
     fn label(self) -> &'static str {
         match self {
             OptionsTab::General => "General",
+            OptionsTab::Theme => "Theme",
             OptionsTab::Shortcuts => "Keyboard shortcuts",
         }
     }
@@ -61,19 +140,24 @@ impl OptionsTab {
     fn id(self) -> &'static str {
         match self {
             OptionsTab::General => "tab-general",
+            OptionsTab::Theme => "tab-theme",
             OptionsTab::Shortcuts => "tab-shortcuts",
         }
     }
 
     fn icon(self) -> &'static str {
+        // Emoji-presentation glyphs (the trailing U+FE0F variation selector
+        // forces full-color emoji rendering) so all three tabs share the
+        // palette icon's style rather than mixing it with monochrome symbols.
         match self {
-            OptionsTab::General => "\u{2699}",
-            OptionsTab::Shortcuts => "\u{2328}",
+            OptionsTab::General => "\u{2699}\u{FE0F}",
+            OptionsTab::Theme => "\u{1F3A8}",
+            OptionsTab::Shortcuts => "\u{2328}\u{FE0F}",
         }
     }
 }
 
-const TABS: &[OptionsTab] = &[OptionsTab::General, OptionsTab::Shortcuts];
+const TABS: &[OptionsTab] = &[OptionsTab::General, OptionsTab::Theme, OptionsTab::Shortcuts];
 
 /// Options dialog state.
 pub struct OptionsDialogState {
@@ -230,6 +314,10 @@ impl OptionsDialogState {
                         s.pop();
                         self.options.minimap_width = s.parse::<u32>().unwrap_or(0) as f32;
                     }
+                    EditField::Color(key) => {
+                        key.get_mut(self.options.active_scheme_mut()).pop();
+                        self.preview_theme(cx);
+                    }
                 }
                 cx.notify();
             }
@@ -284,10 +372,34 @@ impl OptionsDialogState {
                                 s.parse::<u32>().unwrap_or(current) as f32;
                         }
                     }
+                    EditField::Color(key) => {
+                        // Accept only hex-color characters; ignore the rest so
+                        // the field always holds a parseable-in-progress string.
+                        if ch
+                            .chars()
+                            .all(|c| c == '#' || c.is_ascii_hexdigit())
+                        {
+                            let field = key.get_mut(self.options.active_scheme_mut());
+                            // Cap at `#RRGGBBAA` (9 chars) so typing can't grow
+                            // unbounded.
+                            if field.len() < 9 {
+                                field.push_str(ch);
+                                self.preview_theme(cx);
+                            }
+                        }
+                    }
                 }
                 cx.notify();
             }
         }
+    }
+
+    /// Push the in-progress (uncommitted) options into the live `Theme`
+    /// global so color edits are visible immediately. Safe even with a
+    /// half-typed hex string — `Theme::from_options` falls back to the
+    /// built-in scheme on a parse error.
+    fn preview_theme(&self, cx: &mut Context<Self>) {
+        cx.set_global(Theme::from_options(&self.options));
     }
 
     /// Render the dialog overlay. The body is split into title / content /
@@ -356,6 +468,7 @@ impl OptionsDialogState {
         let sidebar = self.render_sidebar(theme, cx);
         let pane = match self.tab {
             OptionsTab::General => self.render_general_pane(theme, cx),
+            OptionsTab::Theme => self.render_theme_pane(theme, cx),
             OptionsTab::Shortcuts => self.render_shortcuts_pane(theme, cx),
         };
 
@@ -412,7 +525,6 @@ impl OptionsDialogState {
 
     /// General tab: editable text/number fields, theme toggle, follow-file.
     fn render_general_pane(&mut self, theme: Theme, cx: &mut Context<Self>) -> AnyElement {
-        let dark = self.options.dark_theme;
         let follow = self.options.follow_file;
         let font = self.options.main_font.clone();
         let font_size = self.options.main_font_size;
@@ -440,7 +552,6 @@ impl OptionsDialogState {
                 theme,
                 cx,
             ))
-            .child(self.render_theme_toggle_row(dark, theme))
             .child(self.render_bool_row(
                 "Follow File",
                 follow,
@@ -467,6 +578,156 @@ impl OptionsDialogState {
                 cx,
             ))
             .into_any()
+    }
+
+    /// Theme tab: the dark/light mode toggle, then one editable hex row per
+    /// color in the active scheme. Built from a `Vec<AnyElement>` (like the
+    /// shortcuts pane) to keep the GPUI element tree shallow under the crate's
+    /// `recursion_limit`.
+    fn render_theme_pane(&mut self, theme: Theme, cx: &mut Context<Self>) -> AnyElement {
+        let dark = self.options.dark_theme;
+        let focused = self.focused_field;
+        let scheme = self.options.active_scheme().clone();
+
+        let rows: Vec<AnyElement> = COLOR_FIELDS
+            .iter()
+            .map(|&(label, key)| {
+                let hex = key.get(&scheme).clone();
+                let is_focused = focused == Some(EditField::Color(key));
+                self.render_color_row(label, key, &hex, is_focused, theme, cx)
+            })
+            .collect();
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(self.render_theme_toggle_row(dark, theme, cx))
+            .child(
+                div()
+                    .id("theme-color-scroll")
+                    .max_h(px(300.0))
+                    .overflow_y_scroll()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .children(rows),
+            )
+            .into_any()
+    }
+
+    /// One color row: label, an editable hex field (focus + type like the
+    /// other text rows), a live swatch, and — when focused — a strip of
+    /// clickable preset swatches. All edits live-preview the `Theme` global.
+    fn render_color_row(
+        &self,
+        label: &str,
+        key: ColorKey,
+        hex: &str,
+        is_focused: bool,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let display = if is_focused {
+            format!("{hex}\u{2502}")
+        } else if hex.is_empty() {
+            "(click to set)".to_string()
+        } else {
+            hex.to_string()
+        };
+        // Swatch falls back to the dialog background when the hex is partial /
+        // invalid, so a half-typed value doesn't paint a jarring color.
+        let swatch = parse_hex_color(hex).unwrap_or(theme.current_line);
+        let row_id = ElementId::Name(format!("color-{}", key.id()).into());
+        let field_id = ElementId::Name(format!("color-field-{}", key.id()).into());
+
+        let mut row = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .id(row_id)
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _event, window, cx| {
+                        this.focus_field(EditField::Color(key), window, cx);
+                    }))
+                    .child(div().text_color(theme.line_number).child(label.to_string()))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .w(px(20.0))
+                                    .h(px(20.0))
+                                    .bg(swatch)
+                                    .border_1()
+                                    .border_color(theme.selection)
+                                    .rounded_sm(),
+                            )
+                            .child(
+                                div()
+                                    .id(field_id)
+                                    .min_w(px(120.0))
+                                    .px_2()
+                                    .py_1()
+                                    .bg(theme.current_line)
+                                    .border_1()
+                                    .border_color(if is_focused {
+                                        theme.search_current
+                                    } else {
+                                        theme.selection
+                                    })
+                                    .rounded_sm()
+                                    .text_color(theme.foreground)
+                                    .child(display),
+                            ),
+                    ),
+            );
+
+        // Preset palette only for the focused row, to keep the pane compact.
+        if is_focused {
+            let swatches: Vec<AnyElement> = PRESET_SWATCHES
+                .iter()
+                .enumerate()
+                .map(|(i, &preset)| {
+                    let color = parse_hex_color(preset).unwrap_or(theme.current_line);
+                    let swatch_id =
+                        ElementId::Name(format!("preset-{}-{}", key.id(), i).into());
+                    let preset = preset.to_string();
+                    div()
+                        .id(swatch_id)
+                        .w(px(20.0))
+                        .h(px(20.0))
+                        .bg(color)
+                        .border_1()
+                        .border_color(theme.selection)
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                            *key.get_mut(this.options.active_scheme_mut()) = preset.clone();
+                            this.preview_theme(cx);
+                            cx.notify();
+                        }))
+                        .into_any()
+                })
+                .collect();
+            row = row.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .gap_1()
+                    .children(swatches),
+            );
+        }
+
+        row.into_any()
     }
 
     /// Shortcuts tab: scrollable action list + the optional conflict notice.
@@ -547,6 +808,7 @@ impl OptionsDialogState {
                         }
                         cx.set_global(FontSettings::from_options(&this.options));
                         cx.set_global(MinimapSettings::from_options(&this.options));
+                        cx.set_global(Theme::from_options(&this.options));
                         cx.emit(OptionsDialogEvent::KeymapSaved);
                         this.close(cx);
                     }))
@@ -751,11 +1013,13 @@ impl OptionsDialogState {
             .into_any()
     }
 
-    /// Render the "Dark Theme" row. Clicking the value chip dispatches
-    /// `ToggleTheme`, which MainWindow listens for and updates persisted
-    /// options out-of-band — we mirror the flip into our local copy so the
-    /// dialog reflects the change immediately.
-    fn render_theme_toggle_row(&self, dark: bool, theme: Theme) -> AnyElement {
+    /// Render the "Theme" (dark ↔ light) row. Clicking the chip flips the
+    /// dialog's uncommitted `dark_theme` flag and live-previews — matching the
+    /// commit-on-Save model of the rest of the dialog. (The app-menu
+    /// `ToggleTheme` action persists out-of-band; this one does not until the
+    /// user hits Save.) On the Theme tab this also switches which custom scheme
+    /// the color rows below edit.
+    fn render_theme_toggle_row(&self, dark: bool, theme: Theme, cx: &mut Context<Self>) -> AnyElement {
         let value = if dark { "Dark" } else { "Light" };
         div()
             .flex()
@@ -774,9 +1038,13 @@ impl OptionsDialogState {
                     .text_color(theme.foreground)
                     .cursor_pointer()
                     .child(format!("{}  (click to toggle)", value))
-                    .on_click(|_event, window, cx| {
-                        window.dispatch_action(Box::new(ToggleTheme), cx);
-                    }),
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.options.dark_theme = !this.options.dark_theme;
+                        // A color field on the other scheme is no longer valid.
+                        this.focused_field = None;
+                        this.preview_theme(cx);
+                        cx.notify();
+                    })),
             )
             .into_any()
     }
