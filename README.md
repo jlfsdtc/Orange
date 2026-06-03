@@ -10,22 +10,29 @@ regex filtering, live tail, bookmarks, and predefined highlight rules.
 - **Parallel indexing** with `rayon`, SIMD-accelerated UTF-8 validation, and
   compressed line-position storage so multi-GB logs stay responsive.
 
-> Status: **0.1.0**. The GUI is usable; the `orange-grep` CLI is a stub.
+> Status: **0.1.0**. The GUI is usable, and `orange-grep` is a working
+> headless search tool (boolean-expression mode is the one piece still
+> unimplemented).
 
 ---
 
 ## Features
 
 - Open arbitrarily large log files with virtual scrolling.
+- Multiple files open at once as tabs (`Cmd/Ctrl-1`…`9` to switch).
 - Filtered view that re-runs as you type, powered by Hyperscan regex.
 - Quick-find bar (`Cmd/Ctrl-F`) with next/previous navigation.
 - Predefined filter sets with persistent highlighting.
 - Tail mode that follows file appends in real time (`notify`-based).
 - Session save/restore — re-open the same files, filters, and scroll position.
-- Side overview/minimap and per-line bookmarks.
+- Side overview/minimap, a horizontal scroll bar for long lines, and
+  per-line bookmarks.
+- Copy selected lines, and adjustable log-text font size.
+- A scratchpad panel for jotting notes alongside the log.
 - Light and dark themes (`assets/themes/{light,dark}.json`).
 - User-editable keymap that resolves `secondary-` to `cmd` on macOS and
-  `ctrl` elsewhere — see [`assets/keymaps/README.md`](assets/keymaps/README.md).
+  `ctrl` elsewhere — editable in-app or via JSON; see
+  [`assets/keymaps/README.md`](assets/keymaps/README.md).
 
 ---
 
@@ -84,17 +91,40 @@ the most common are:
 | -------------------- | ------ | ---------------- |
 | Open file            | `⌘O`   | `Ctrl-O`         |
 | Quick find           | `⌘F`   | `Ctrl-F`         |
+| Find next / previous | `⌘G` / `⌘⇧G` | `F3` / `Shift-F3` |
 | Go to line           | `⌘L`   | `Ctrl-L`         |
 | Toggle tail mode     | `⌘T`   | `Ctrl-T`         |
-| Toggle filtered view | `⌘⇧R`  | `Ctrl-Shift-R`   |
+| Toggle filtered view | `⌘⇧R`  | `F4`             |
+| Toggle filter panel  | `⌘⇧P`  | `Ctrl-Shift-P`   |
+| Toggle minimap       | `⌘⇧M`  | `Ctrl-Shift-M`   |
+| Toggle scratchpad    | `⌘⇧S`  | `Ctrl-Shift-S`   |
 | Toggle theme         | `⌘⇧T`  | `Ctrl-Shift-T`   |
+| Copy selection       | `⌘C`   | `Ctrl-C`         |
+| Switch to tab 1–9    | `⌘1`–`⌘9` | `Ctrl-1`–`Ctrl-9` |
+| Close tab            | `⌘W`   | `Ctrl-W`         |
 | Open options         | `⌘,`   | `Ctrl-,`         |
 | Quit                 | `⌘Q`   | `Ctrl-Q`         |
 
+The full list — including font sizing and session shortcuts, and the
+handful of per-platform overrides — lives in
+[`assets/keymaps/README.md`](assets/keymaps/README.md).
+
 ### CLI (`orange-grep`)
 
-Reuses the core search engine for headless grep-style use. Currently a
-stub — tracked in `crates/orange-app/src/grep.rs`.
+Reuses the core engine (`orange_core::LogData` + `orange_regex::RegexEngine`)
+for headless, grep-style search:
+
+```sh
+orange-grep [OPTIONS] <PATTERN> <FILE>
+```
+
+| Flag                 | Description                                    |
+| -------------------- | ---------------------------------------------- |
+| `<PATTERN>`          | Hyperscan regex to match                       |
+| `<FILE>`             | Log file to search                             |
+| `-i, --ignore-case`  | Case-insensitive search                        |
+| `-n, --line-number`  | Prefix matches with their 1-based line number  |
+| `-b, --boolean`      | Boolean-expression mode (not yet implemented)  |
 
 ---
 
@@ -110,7 +140,9 @@ Orange writes user state under the platform's standard config directory:
 
 Files:
 
-- `keymap.json` — written on first launch, edit and restart to remap keys.
+- `keymap.json` — written on first launch. Remap keys in-app via
+  **Preferences → Shortcuts** (applied immediately) or by editing this file
+  and restarting.
 - `settings.json` — UI/theme preferences.
 - `sessions/` — saved session snapshots.
 

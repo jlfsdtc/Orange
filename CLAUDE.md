@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 Orange is a fast log file viewer — a Rust rewrite of [klogg](https://github.com/variar/klogg).
-It is a GPUI desktop app (`orange`) plus a CLI grep tool (`orange-grep`, currently a stub
-in `crates/orange-app/src/grep.rs`). Targets macOS, Linux, and Windows.
+It is a GPUI desktop app (`orange`) plus a CLI grep tool (`orange-grep` in
+`crates/orange-app/src/grep.rs`). Targets macOS, Linux, and Windows.
 
 ## Common commands
 
@@ -83,6 +83,8 @@ orange-app ──► orange-ui ──► orange-core ──► orange-regex
 
 ## Status notes
 
-- Version is `0.1.0`. `orange-grep` is a `todo!()` stub — wiring it up means
-  reusing `orange_core::LogData` + `orange_regex::RegexEngine` from `grep.rs`.
+- Version is `0.1.0`. `orange-grep` works — it reuses `orange_core::LogData` +
+  `orange_regex::RegexEngine` to do line-by-line regex matching (`-i`, `-n`
+  flags). The only unimplemented piece is `--boolean` mode, which currently
+  bails with an error.
 - Repo: <https://github.com/jlfsdtc/Orange>.
