@@ -7,7 +7,7 @@ use gpui::*;
 
 use crate::about_dialog::{AboutDialogEvent, AboutDialogState, CloseAbout, OpenAbout};
 use crate::components::tab_bar::{TabBarEvent, TabBarState};
-use crate::filtered_view::{FilteredViewState, ToggleFilteredView};
+use crate::filtered_view::{FilteredViewEvent, FilteredViewState, ToggleFilteredView};
 use crate::go_to_line::{GoToLineEvent, GoToLineState};
 use crate::highlighter::HighlighterSet;
 use crate::log_view::{LogViewEvent, LogViewState, ToggleTailMode};
@@ -54,6 +54,15 @@ actions!(
     ]
 );
 
+/// Which view a copy action should read from — whichever view the user last
+/// interacted with (clicked, dragged, or right-clicked).
+#[derive(Clone, Copy, PartialEq)]
+enum CopySource {
+    Log,
+    Filtered,
+    QuickFind,
+}
+
 /// A single tab's data.
 struct TabData {
     log_view: Entity<LogViewState>,
@@ -97,6 +106,10 @@ pub struct MainWindowState {
     /// rendered at the top level — that way `.absolute()` positioning is
     /// window-relative and `event.position` can be used directly.
     context_menu: Option<Point<Pixels>>,
+    /// Which view a copy action (Cmd+C or the context menu) reads from —
+    /// tracks the view the user last interacted with so the right selection
+    /// is copied.
+    copy_source: CopySource,
     /// Focus anchor for the root div. Without this, GPUI's action dispatcher
     /// has no element in the focus chain and global shortcuts never fire.
     focus_handle: FocusHandle,
@@ -125,7 +138,9 @@ impl MainWindowState {
         let session_widget = cx.new(|cx| SessionWidgetState::new(cx));
         let go_to_line = cx.new(|cx| GoToLineState::new(cx));
 
-        // Scroll the active LogView to a match when QuickFind announces one.
+        // Scroll the active LogView to a match when QuickFind announces one,
+        // and route the results-list context menu / selection through the same
+        // copy machinery as the log and filtered views.
         cx.subscribe(&quick_find, |this: &mut Self, _quick_find, event, cx| {
             match event {
                 QuickFindEvent::JumpTo(line) => {
@@ -134,6 +149,15 @@ impl MainWindowState {
                         view.select_line(Some(line), cx);
                         view.scroll_to_line(line, cx);
                     });
+                }
+                QuickFindEvent::ShowContextMenu(pos) => {
+                    this.copy_source = CopySource::QuickFind;
+                    this.context_menu = Some(*pos);
+                    cx.notify();
+                }
+                QuickFindEvent::SelectionChanged => {
+                    this.copy_source = CopySource::QuickFind;
+                    cx.notify();
                 }
             }
         })
@@ -251,12 +275,16 @@ impl MainWindowState {
                 "Ready - Press Ctrl+O to open a file".to_string()
             },
             context_menu: None,
+            copy_source: CopySource::Log,
             focus_handle: cx.focus_handle(),
         };
 
-        // Subscribe to the initial tab's log view so right-clicks raise the
-        // context menu. Tabs created later wire this up in open_file_in_new_tab.
+        // Subscribe to the initial tab's log view and filtered view so
+        // right-clicks raise the context menu and selection changes route
+        // copy to the right view. Tabs created later wire this up in
+        // open_file_in_new_tab.
         Self::subscribe_log_view(&this.tabs[0].log_view, cx);
+        Self::subscribe_filtered(&this.tabs[0].filtered, cx);
         this
     }
 
@@ -264,11 +292,40 @@ impl MainWindowState {
     fn subscribe_log_view(log_view: &Entity<LogViewState>, cx: &mut Context<Self>) {
         cx.subscribe(log_view, |this, _, event, cx| match event {
             LogViewEvent::ShowContextMenu(pos) => {
+                this.copy_source = CopySource::Log;
                 this.context_menu = Some(*pos);
+                cx.notify();
+            }
+            LogViewEvent::SelectionChanged => {
+                this.copy_source = CopySource::Log;
+            }
+        })
+        .detach();
+    }
+
+    /// Wire a filtered view's events into the window's overlay state. Mirrors
+    /// `subscribe_log_view` so the search-result panel can raise the same
+    /// context menu and steer copy actions to its own selection.
+    fn subscribe_filtered(filtered: &Entity<FilteredViewState>, cx: &mut Context<Self>) {
+        cx.subscribe(filtered, |this, _, event, cx| match event {
+            FilteredViewEvent::ShowContextMenu(pos) => {
+                this.copy_source = CopySource::Filtered;
+                this.context_menu = Some(*pos);
+                cx.notify();
+            }
+            FilteredViewEvent::SelectionChanged => {
+                this.copy_source = CopySource::Filtered;
                 cx.notify();
             }
         })
         .detach();
+        // The filtered view is rendered inline by MainWindow (via
+        // `render_view`), which does NOT create an automatic subscription, so
+        // a `cx.notify()` from inside its mouse handlers (selection drag,
+        // mouse-up) only marks the child dirty — MainWindow never re-renders
+        // and the selection highlight never appears. Observe it explicitly,
+        // same as `quick_find` above.
+        cx.observe(filtered, |_, _, cx| cx.notify()).detach();
     }
 
     /// Wire a minimap's ScrollTo events to the active tab's log view.
@@ -379,10 +436,26 @@ impl MainWindowState {
         cx: &mut Context<Self>,
     ) {
         tracing::info!("CopySelection dispatched");
-        let log_view = self.tabs[self.active_tab].log_view.clone();
-        let (text, line_count) = log_view.update(cx, |view, _| {
-            (view.selection_text(), view.selection_line_count())
-        });
+        let (text, line_count) = match self.copy_source {
+            CopySource::Filtered => {
+                let filtered = self.tabs[self.active_tab].filtered.clone();
+                filtered.update(cx, |view, _| {
+                    (view.selection_text(), view.selection_line_count())
+                })
+            }
+            CopySource::QuickFind => {
+                let quick_find = self.quick_find.clone();
+                quick_find.update(cx, |view, _| {
+                    (view.result_selection_text(), view.result_selection_line_count())
+                })
+            }
+            CopySource::Log => {
+                let log_view = self.tabs[self.active_tab].log_view.clone();
+                log_view.update(cx, |view, _| {
+                    (view.selection_text(), view.selection_line_count())
+                })
+            }
+        };
         let Some(text) = text else {
             self.status = "Copy: nothing selected (click a line first)".to_string();
             cx.notify();
@@ -406,10 +479,26 @@ impl MainWindowState {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let log_view = self.tabs[self.active_tab].log_view.clone();
-        let (text, line_count) = log_view.update(cx, |view, _| {
-            (view.selected_lines_text(), view.selection_line_count())
-        });
+        let (text, line_count) = match self.copy_source {
+            CopySource::Filtered => {
+                let filtered = self.tabs[self.active_tab].filtered.clone();
+                filtered.update(cx, |view, _| {
+                    (view.selected_lines_text(), view.selection_line_count())
+                })
+            }
+            CopySource::QuickFind => {
+                let quick_find = self.quick_find.clone();
+                quick_find.update(cx, |view, _| {
+                    (view.result_selected_lines_text(), view.result_selection_line_count())
+                })
+            }
+            CopySource::Log => {
+                let log_view = self.tabs[self.active_tab].log_view.clone();
+                log_view.update(cx, |view, _| {
+                    (view.selected_lines_text(), view.selection_line_count())
+                })
+            }
+        };
         let Some(text) = text else {
             self.status = "Copy: nothing selected (click a line first)".to_string();
             cx.notify();
@@ -431,6 +520,10 @@ impl MainWindowState {
         let was_visible = self.context_menu.take().is_some();
         let log_view = self.tabs[self.active_tab].log_view.clone();
         log_view.update(cx, |view, _| view.clear_right_click());
+        let filtered = self.tabs[self.active_tab].filtered.clone();
+        filtered.update(cx, |view, _| view.clear_right_click());
+        let quick_find = self.quick_find.clone();
+        quick_find.update(cx, |view, _| view.clear_result_right_click());
         if was_visible {
             cx.notify();
         }
@@ -564,6 +657,7 @@ impl MainWindowState {
             let filtered = cx.new(|cx| FilteredViewState::new(cx));
             let overview = cx.new(OverviewState::new);
             Self::subscribe_log_view(&log_view, cx);
+            Self::subscribe_filtered(&filtered, cx);
             Self::subscribe_overview(&overview, cx);
             self.tabs.push(TabData { log_view, filtered, overview });
             self.active_tab = self.tabs.len() - 1;
@@ -608,6 +702,7 @@ impl MainWindowState {
             let filtered = cx.new(|cx| FilteredViewState::new(cx));
             let overview = cx.new(OverviewState::new);
             Self::subscribe_log_view(&log_view, cx);
+            Self::subscribe_filtered(&filtered, cx);
             Self::subscribe_overview(&overview, cx);
             self.tabs[0] = TabData { log_view, filtered, overview };
             self.tab_bar.update(cx, |bar, _| bar.close_tab(closed_idx));

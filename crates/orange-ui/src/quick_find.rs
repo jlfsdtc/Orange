@@ -13,6 +13,10 @@ use std::sync::Arc;
 
 use crate::h_scrollbar::{self, HScrollState};
 use crate::overview::{MinimapEvent, OverviewState};
+use crate::text_selection::{
+    char_advance_for, column_for_x, join_char_range, join_full_lines, render_line_content,
+    word_range_at, CharPos, CharSelection, LineHighlight, LineSelection, Selection,
+};
 use crate::theme::{FontSettings, Theme};
 
 // Actions for quick find.
@@ -26,6 +30,12 @@ actions!(
 pub enum QuickFindEvent {
     /// The view should scroll to and select this 0-based line number.
     JumpTo(u64),
+    /// User right-clicked at this window-relative position in the results
+    /// list; the window should show the copy context menu.
+    ShowContextMenu(Point<Pixels>),
+    /// The user changed the results-list selection by interacting with it.
+    /// Lets the window route a later copy action to this view.
+    SelectionChanged,
 }
 
 /// Quick find bar state.
@@ -78,6 +88,19 @@ pub struct QuickFindState {
     /// file's longest line so the bar is stable regardless of which matches
     /// are shown; the gutter stays fixed while line content scrolls sideways.
     h_scroll: HScrollState,
+    /// Selection over the *results list* (distinct from `selection`, which is
+    /// over the query input). The `line` coordinate is a **row index** into
+    /// `matching_lines`, since the results list shows a non-contiguous subset
+    /// of the file; copy maps each row back to its source line. `None` when
+    /// nothing is selected.
+    result_selection: Option<Selection>,
+    /// Mouse-down anchor on a non-shift single click in the results list, used
+    /// to fall back to a whole-row selection when the user releases without
+    /// dragging. Cleared once a drag is detected. Its `line` is a row index.
+    result_pending_click: Option<CharPos>,
+    /// Row index under the most recent right-click in the results list — a
+    /// fallback copy target when there is no active result selection.
+    result_right_click_row: Option<usize>,
 }
 
 const PANEL_MIN_PX: f32 = 60.0;
@@ -119,6 +142,9 @@ impl QuickFindState {
             resize_anchor: None,
             minimap,
             h_scroll: HScrollState::new(),
+            result_selection: None,
+            result_pending_click: None,
+            result_right_click_row: None,
         }
     }
 
@@ -172,6 +198,7 @@ impl QuickFindState {
             self.regex_error = None;
             self.drag_anchor = None;
             self.resize_anchor = None;
+            self.clear_result_selection();
         }
         cx.notify();
     }
@@ -187,6 +214,7 @@ impl QuickFindState {
         self.regex_error = None;
         self.drag_anchor = None;
         self.resize_anchor = None;
+        self.clear_result_selection();
         cx.notify();
     }
 
@@ -209,6 +237,7 @@ impl QuickFindState {
         self.line_matches.clear();
         self.current_match = 0;
         self.regex_error = None;
+        self.clear_result_selection();
 
         if self.query.is_empty() {
             cx.notify();
@@ -345,6 +374,174 @@ impl QuickFindState {
             self.emit_current_match(cx);
             cx.notify();
         }
+    }
+
+    /// Drop any results-list selection and its fallback anchors.
+    fn clear_result_selection(&mut self) {
+        self.result_selection = None;
+        self.result_pending_click = None;
+        self.result_right_click_row = None;
+    }
+
+    /// Number of result rows the current results selection spans (0 when
+    /// nothing is selected). Mirrors `LogViewState::selection_line_count`.
+    pub fn result_selection_line_count(&self) -> u64 {
+        self.result_selection
+            .as_ref()
+            .map(|s| s.hi_line() - s.lo_line() + 1)
+            .unwrap_or(0)
+    }
+
+    /// Collect the source-file bytes for result rows `lo..=hi` (row indices
+    /// into `matching_lines`), in display order, for the copy helpers.
+    fn result_rows_bytes(&self, lo_row: u64, hi_row: u64) -> Vec<Vec<u8>> {
+        let Some(data) = self.log_data.as_ref() else {
+            return Vec::new();
+        };
+        (lo_row..=hi_row)
+            .filter_map(|r| self.matching_lines.get(r as usize).copied())
+            .map(|line| data.get_line(line).unwrap_or_default())
+            .collect()
+    }
+
+    /// Text of the current results selection joined by `\n`. For a character
+    /// selection the first/last rows are sliced at the endpoints; for a row
+    /// selection every row is returned whole. Falls back to the right-clicked
+    /// row when there is no active selection. Mirrors
+    /// `LogViewState::selection_text`.
+    pub fn result_selection_text(&self) -> Option<String> {
+        self.log_data.as_ref()?;
+        let Some(sel) = self.result_selection.as_ref() else {
+            let row = self.result_right_click_row?;
+            return Some(join_full_lines(&self.result_rows_bytes(row as u64, row as u64)));
+        };
+        if let Selection::Char(s) = sel {
+            if s.is_empty() {
+                let row = self.result_right_click_row?;
+                return Some(join_full_lines(&self.result_rows_bytes(row as u64, row as u64)));
+            }
+        }
+        let lo_row = sel.lo_line();
+        let hi_row = sel.hi_line();
+        let rows = self.result_rows_bytes(lo_row, hi_row);
+        match sel {
+            Selection::Line(_) => Some(join_full_lines(&rows)),
+            Selection::Char(c) => {
+                let (lo, hi) = c.ordered();
+                // `join_char_range` only uses lo/hi to detect the first and
+                // last entries, so passing the row-index range works.
+                Some(join_char_range(&rows, lo.col, hi.col, lo_row, hi_row))
+            }
+        }
+    }
+
+    /// Full-line text for every results row the selection touches (whole rows
+    /// even for a sub-line character selection). Falls back to the
+    /// right-clicked row. Mirrors `LogViewState::selected_lines_text`.
+    pub fn result_selected_lines_text(&self) -> Option<String> {
+        self.log_data.as_ref()?;
+        let (lo_row, hi_row) = match self.result_selection.as_ref() {
+            Some(sel) => (sel.lo_line(), sel.hi_line()),
+            None => {
+                let row = self.result_right_click_row?;
+                (row as u64, row as u64)
+            }
+        };
+        Some(join_full_lines(&self.result_rows_bytes(lo_row, hi_row)))
+    }
+
+    /// Clear the results right-click fallback. Called when the context menu
+    /// closes so a later Cmd+C doesn't copy a stale row.
+    pub fn clear_result_right_click(&mut self) {
+        self.result_right_click_row = None;
+    }
+
+    fn handle_result_mouse_down(
+        &mut self,
+        row: u64,
+        col: usize,
+        shift: bool,
+        click_count: usize,
+        row_text: &str,
+        cx: &mut Context<Self>,
+    ) {
+        // Any mouse-down in the results list means the user is now selecting
+        // here; tell the window so a later Cmd+C copies from this view.
+        cx.emit(QuickFindEvent::SelectionChanged);
+        if shift {
+            match &mut self.result_selection {
+                Some(Selection::Line(sel)) => sel.head = row,
+                Some(Selection::Char(sel)) => sel.head = CharPos::new(row, 0),
+                None => {
+                    self.result_selection = Some(Selection::Line(LineSelection::single(row)))
+                }
+            }
+            self.result_pending_click = None;
+            cx.notify();
+            return;
+        }
+        if click_count >= 2 {
+            if let Some((start, end)) = word_range_at(row_text, col) {
+                self.result_selection = Some(Selection::Char(CharSelection {
+                    anchor: CharPos::new(row, start),
+                    head: CharPos::new(row, end),
+                }));
+                cx.notify();
+            }
+            self.result_pending_click = None;
+            return;
+        }
+        // Single click: start a zero-width char selection so a drag can grow
+        // it, but remember the click so mouse_up can fall back to a whole-row
+        // jump+select when no drag happens.
+        let anchor = CharPos::new(row, col);
+        self.result_selection =
+            Some(Selection::Char(CharSelection { anchor, head: anchor }));
+        self.result_pending_click = Some(anchor);
+        cx.notify();
+    }
+
+    fn handle_result_mouse_drag(&mut self, row: u64, col: usize, cx: &mut Context<Self>) {
+        match &mut self.result_selection {
+            Some(Selection::Char(sel)) => {
+                sel.head = CharPos::new(row, col);
+                self.result_pending_click = None;
+                cx.notify();
+            }
+            Some(Selection::Line(sel)) => {
+                sel.head = row;
+                cx.notify();
+            }
+            None => {}
+        }
+    }
+
+    fn handle_result_mouse_up(&mut self, cx: &mut Context<Self>) {
+        // A click with no drag falls back to whole-row select AND preserves
+        // the original click-to-jump behavior (scroll the main LogView to
+        // this match).
+        if let Some(anchor) = self.result_pending_click.take() {
+            if let Some(Selection::Char(sel)) = &self.result_selection {
+                if sel.is_empty() {
+                    self.result_selection =
+                        Some(Selection::Line(LineSelection::single(anchor.line)));
+                    self.select_match(anchor.line as usize, cx);
+                    cx.notify();
+                }
+            }
+        }
+    }
+
+    fn handle_result_right_click(
+        &mut self,
+        row: usize,
+        pos: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        // Preserve the existing selection; only remember the clicked row as a
+        // fallback target for the menu's copy actions.
+        self.result_right_click_row = Some(row);
+        cx.emit(QuickFindEvent::ShowContextMenu(pos));
     }
 
     fn scroll_current_into_view(&self) {
@@ -797,6 +994,7 @@ impl QuickFindState {
         let matching = self.matching_lines.clone();
         let line_matches = self.line_matches.clone();
         let current = self.current_match;
+        let selection = self.result_selection;
         let line_height = font.line_height();
         let font_size = font.size;
         let font_family = font.family.clone();
@@ -806,7 +1004,7 @@ impl QuickFindState {
         // the gutter scales with the user's font setting.
         let max_line = *matching.last().unwrap_or(&0);
         let gutter_digits = digits_for(max_line + 1);
-        let char_advance = f32::from(font_size) * 0.6;
+        let char_advance = char_advance_for(font_size);
         let gutter_width = gutter_digits as f32 * char_advance + 16.0 + 1.0;
         // Horizontal scroll, sized from the source file's longest line (a byte
         // count, slightly over-estimating multi-byte UTF-8 width). The content
@@ -870,13 +1068,43 @@ impl QuickFindState {
                         let line_text = String::from_utf8_lossy(&bytes).to_string();
                         let ranges = line_matches.get(i).cloned().unwrap_or_default();
                         let is_current = i == current;
-                        let row_bg = if is_current {
-                            theme.selection
-                        } else {
-                            theme.background
+                        let row = i as u64;
+                        let line_char_len = line_text.chars().count();
+                        let highlight = selection
+                            .map(|s| s.highlight_for(row, line_char_len))
+                            .unwrap_or(LineHighlight::None);
+
+                        // A full-row selection (or the current-match row) tints
+                        // the whole row like a LogView selection. A character
+                        // range must NOT tint the whole row — otherwise the
+                        // selected span (painted in `theme.selection` by
+                        // `render_line_content`) is invisible against an
+                        // identically-colored background, which happens after a
+                        // double-click since the preceding click made this the
+                        // current match.
+                        let row_bg = match highlight {
+                            LineHighlight::Full => theme.selection,
+                            LineHighlight::Range(..) => theme.background,
+                            LineHighlight::None if is_current => theme.selection,
+                            LineHighlight::None => theme.background,
                         };
 
-                        let click_entity = entity.clone();
+                        let down_entity = entity.clone();
+                        let move_entity = entity.clone();
+                        let up_entity = entity.clone();
+                        let right_entity = entity.clone();
+                        let down_text = line_text.clone();
+                        let move_text = line_text.clone();
+
+                        // When the selection touches this row, show the
+                        // selection highlight (consistent with the main view);
+                        // otherwise keep the inline query-match highlighting.
+                        let content: AnyElement = match highlight {
+                            LineHighlight::None => {
+                                render_result_line(&line_text, &ranges, theme)
+                            }
+                            _ => render_line_content(&line_text, highlight, theme),
+                        };
 
                         div()
                             .flex()
@@ -886,9 +1114,51 @@ impl QuickFindState {
                             .w_full()
                             .text_size(font_size)
                             .font_family(font_family.clone())
-                            .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
-                                click_entity.update(cx, |this, cx| {
-                                    this.select_match(i, cx);
+                            .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
+                                let shift = event.modifiers.shift;
+                                let click_count = event.click_count;
+                                let col = column_for_x(
+                                    f32::from(event.position.x),
+                                    gutter_width,
+                                    char_advance,
+                                    h_offset,
+                                    down_text.chars().count(),
+                                );
+                                down_entity.update(cx, |this, cx| {
+                                    this.handle_result_mouse_down(
+                                        row,
+                                        col,
+                                        shift,
+                                        click_count,
+                                        &down_text,
+                                        cx,
+                                    );
+                                });
+                            })
+                            .on_mouse_move(move |event, _window, cx| {
+                                if !event.dragging() {
+                                    return;
+                                }
+                                let col = column_for_x(
+                                    f32::from(event.position.x),
+                                    gutter_width,
+                                    char_advance,
+                                    h_offset,
+                                    move_text.chars().count(),
+                                );
+                                move_entity.update(cx, |this, cx| {
+                                    this.handle_result_mouse_drag(row, col, cx);
+                                });
+                            })
+                            .on_mouse_up(MouseButton::Left, move |_event, _window, cx| {
+                                up_entity.update(cx, |this, cx| {
+                                    this.handle_result_mouse_up(cx);
+                                });
+                            })
+                            .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+                                let pos = event.position;
+                                right_entity.update(cx, |this, cx| {
+                                    this.handle_result_right_click(i, pos, cx);
                                 });
                             })
                             .child(
@@ -915,9 +1185,7 @@ impl QuickFindState {
                                             .w(px(content_w))
                                             .ml(px(-h_offset))
                                             .whitespace_nowrap()
-                                            .child(render_result_line(
-                                                &line_text, &ranges, theme,
-                                            )),
+                                            .child(content),
                                     ),
                             )
                             .into_any()
