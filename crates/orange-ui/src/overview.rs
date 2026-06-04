@@ -122,7 +122,9 @@ impl OverviewState {
         if self.visible { MINIMAP_WIDTH_PX } else { 0.0 }
     }
 
-    /// Convert a y-offset within the strip into a line number.
+    /// Convert a y-offset within the strip into a line number. Used for
+    /// click-to-jump and the hover tooltip, where the wanted line is simply
+    /// "the one at this y".
     fn line_for_y(&self, y_px: f32, strip_height_px: f32) -> u64 {
         if self.total_lines == 0 || strip_height_px <= 0.0 {
             return 0;
@@ -130,6 +132,23 @@ impl OverviewState {
         let fraction = (y_px / strip_height_px).clamp(0.0, 1.0);
         let line = (fraction * self.total_lines as f32).floor() as u64;
         line.min(self.total_lines.saturating_sub(1))
+    }
+
+    /// Map a dragged thumb/rectangle *top* position to the first visible line,
+    /// using standard scrollbar semantics: the full travel
+    /// `[0, track_h - thumb_h]` maps onto the scrollable line range
+    /// `[0, total_lines - viewport_size]`. Unlike [`Self::line_for_y`], this
+    /// guarantees that dragging to the very bottom shows the file's *last*
+    /// line — the naive mapping stops short by the thumb's height, leaving the
+    /// tail unreachable on large files (where the thumb is at its minimum size).
+    fn line_for_thumb_top(&self, target_top: f32, thumb_h: f32, track_h: f32) -> u64 {
+        let max_line = self.total_lines.saturating_sub(self.viewport_size.max(1));
+        let travel = (track_h - thumb_h).max(0.0);
+        if max_line == 0 || travel <= 0.0 {
+            return 0;
+        }
+        let frac = (target_top / travel).clamp(0.0, 1.0);
+        (frac * max_line as f32).round() as u64
     }
 
     fn viewport_top_fraction(&self) -> f32 {
@@ -194,7 +213,7 @@ impl OverviewState {
             }
             let vp_height = self.viewport_size_fraction() * strip_height;
             let target_top = (local_y - offset).clamp(0.0, (strip_height - vp_height).max(0.0));
-            let line = self.line_for_y(target_top, strip_height);
+            let line = self.line_for_thumb_top(target_top, vp_height, strip_height);
             cx.emit(MinimapEvent::ScrollTo(line));
             return;
         }
@@ -249,13 +268,12 @@ impl OverviewState {
         let vp_top_pct = self.viewport_top_fraction();
         let vp_height_pct = self.viewport_size_fraction();
 
+        // Heat strip: fills the minimap. Carries the click-to-jump /
+        // drag-the-viewport handlers and the bounds canvas.
         let mut container = div()
             .relative()
-            .w(width)
+            .flex_grow()
             .h_full()
-            .bg(theme.current_line)
-            .border_l_1()
-            .border_color(theme.selection)
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -332,7 +350,19 @@ impl OverviewState {
                 .border_color(theme.line_number),
         );
 
-        // Hover tooltip (skip while dragging the viewport).
+        let mut wrapper = div()
+            .flex()
+            .flex_row()
+            .relative()
+            .w(width)
+            .h_full()
+            .bg(theme.current_line)
+            .border_l_1()
+            .border_color(theme.selection)
+            .child(container);
+
+        // Hover tooltip (skip while dragging the viewport). Kept on the outer
+        // wrapper so its right-edge anchor stays relative to the whole minimap.
         if let (Some(line), Some(y), None) =
             (self.hover_line, self.hover_y, self.drag_offset)
         {
@@ -340,7 +370,7 @@ impl OverviewState {
             // Anchor tooltip a few pixels above the cursor; clamp to the
             // strip so it doesn't render outside.
             let tooltip_y = (y - 18.0).max(0.0);
-            container = container.child(
+            wrapper = wrapper.child(
                 div()
                     .absolute()
                     .top(px(tooltip_y))
@@ -355,7 +385,7 @@ impl OverviewState {
             );
         }
 
-        container.into_any()
+        wrapper.into_any()
     }
 }
 

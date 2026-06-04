@@ -9,6 +9,7 @@ use orange_regex::RegexFlags;
 use std::sync::Arc;
 
 use crate::h_scrollbar::{self, HScrollState};
+use crate::v_scrollbar::{self, VScrollState};
 use crate::text_selection::{
     char_advance_for, column_for_x, join_char_range, join_full_lines, render_line_content,
     word_range_at, CharPos, CharSelection, LineHighlight, LineSelection, Selection,
@@ -47,6 +48,9 @@ pub struct FilteredViewState {
     /// the bar is stable regardless of which matches are shown. The gutter
     /// stays fixed while line content scrolls sideways.
     h_scroll: HScrollState,
+    /// Vertical scrollbar state (drag + measured track bounds). The scroll
+    /// position itself lives in `scroll_handle`; this only drives the bar.
+    v_scroll: VScrollState,
     /// Active selection. The `line` coordinate is a **row index** into
     /// `matching_lines` (not an absolute file line), since the filtered view
     /// shows a non-contiguous subset; copy maps each row back to its source
@@ -76,6 +80,7 @@ impl FilteredViewState {
             pattern: String::new(),
             scroll_handle: UniformListScrollHandle::default(),
             h_scroll: HScrollState::new(),
+            v_scroll: VScrollState::new(),
             selection: None,
             pending_click: None,
             right_click_row: None,
@@ -557,6 +562,18 @@ impl FilteredViewState {
             theme,
             cx,
         );
+        // Vertical scrollbar — only meaningful when there are result rows.
+        let v_scrollbar = (total > 0).then(|| {
+            v_scrollbar::render(
+                &mut self.v_scroll,
+                |this: &mut FilteredViewState| &mut this.v_scroll,
+                &self.scroll_handle,
+                total as u64,
+                f32::from(line_height),
+                theme,
+                cx,
+            )
+        });
 
         div()
             .flex()
@@ -565,27 +582,37 @@ impl FilteredViewState {
             .bg(theme.background)
             .child(header)
             .child(
+                // List + vertical scrollbar share a row; the horizontal bar
+                // sits below them.
                 div()
                     .flex()
-                    .flex_col()
+                    .flex_row()
                     .flex_grow()
                     .overflow_hidden()
-                    .child(list)
-                    .on_scroll_wheel(move |event, _window, cx| {
-                        let delta = event.delta.pixel_delta(line_height);
-                        let dx = if event.shift {
-                            f32::from(delta.y)
-                        } else {
-                            f32::from(delta.x)
-                        };
-                        if dx != 0.0 {
-                            entity_wheel.update(cx, |this, cx| {
-                                if this.h_scroll.scroll_by(-dx, content_w) {
-                                    cx.notify();
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_grow()
+                            .overflow_hidden()
+                            .child(list)
+                            .on_scroll_wheel(move |event, _window, cx| {
+                                let delta = event.delta.pixel_delta(line_height);
+                                let dx = if event.shift {
+                                    f32::from(delta.y)
+                                } else {
+                                    f32::from(delta.x)
+                                };
+                                if dx != 0.0 {
+                                    entity_wheel.update(cx, |this, cx| {
+                                        if this.h_scroll.scroll_by(-dx, content_w) {
+                                            cx.notify();
+                                        }
+                                    });
                                 }
-                            });
-                        }
-                    }),
+                            }),
+                    )
+                    .children(v_scrollbar),
             )
             .child(scrollbar)
             .into_any()

@@ -8,6 +8,7 @@ use orange_core::LogData;
 use std::sync::Arc;
 
 use crate::h_scrollbar::{self, HScrollState};
+use crate::v_scrollbar::{self, VScrollState};
 use crate::text_selection::{
     char_advance_for, column_for_x, join_char_range, join_full_lines, render_line_content,
     word_range_at, CharPos, CharSelection, LineHighlight, LineSelection, Selection,
@@ -48,6 +49,9 @@ pub struct LogViewState {
     /// `h_scroll.offset()` so very long lines can be scrolled into view; the
     /// line-number gutter stays fixed.
     h_scroll: HScrollState,
+    /// Vertical scrollbar state (drag + measured track bounds). The scroll
+    /// position itself lives in `scroll_handle`; this only drives the bar.
+    v_scroll: VScrollState,
 }
 
 impl LogViewState {
@@ -64,6 +68,7 @@ impl LogViewState {
             pending_click: None,
             right_click_line: None,
             h_scroll: HScrollState::new(),
+            v_scroll: VScrollState::new(),
         }
     }
 
@@ -480,34 +485,53 @@ impl Render for LogViewState {
         .flex_grow();
 
         let entity_wheel = cx.entity();
+        let v_scrollbar = v_scrollbar::render(
+            &mut self.v_scroll,
+            |this: &mut LogViewState| &mut this.v_scroll,
+            &self.scroll_handle,
+            self.total_lines,
+            f32::from(line_height),
+            theme,
+            cx,
+        );
         div()
             .flex()
             .flex_col()
             .size_full()
             .child(
+                // List + vertical scrollbar share a row; the horizontal bar
+                // sits below them spanning only the list's width.
                 div()
                     .flex()
-                    .flex_col()
+                    .flex_row()
                     .flex_grow()
                     .overflow_hidden()
-                    .child(list)
-                    // Shift+wheel (or a horizontal trackpad gesture) scrolls the
-                    // content sideways.
-                    .on_scroll_wheel(move |event, _window, cx| {
-                        let delta = event.delta.pixel_delta(line_height);
-                        let dx = if event.shift {
-                            f32::from(delta.y)
-                        } else {
-                            f32::from(delta.x)
-                        };
-                        if dx != 0.0 {
-                            entity_wheel.update(cx, |this, cx| {
-                                if this.h_scroll.scroll_by(-dx, content_w) {
-                                    cx.notify();
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_grow()
+                            .overflow_hidden()
+                            .child(list)
+                            // Shift+wheel (or a horizontal trackpad gesture)
+                            // scrolls the content sideways.
+                            .on_scroll_wheel(move |event, _window, cx| {
+                                let delta = event.delta.pixel_delta(line_height);
+                                let dx = if event.shift {
+                                    f32::from(delta.y)
+                                } else {
+                                    f32::from(delta.x)
+                                };
+                                if dx != 0.0 {
+                                    entity_wheel.update(cx, |this, cx| {
+                                        if this.h_scroll.scroll_by(-dx, content_w) {
+                                            cx.notify();
+                                        }
+                                    });
                                 }
-                            });
-                        }
-                    }),
+                            }),
+                    )
+                    .child(v_scrollbar),
             )
             .child(h_scrollbar::render(
                 &mut self.h_scroll,

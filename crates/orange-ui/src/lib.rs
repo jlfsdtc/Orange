@@ -18,6 +18,7 @@ pub mod text_selection;
 pub mod filtered_view;
 pub mod overview;
 pub mod h_scrollbar;
+pub mod v_scrollbar;
 pub mod highlighter;
 pub mod keymap;
 pub mod quick_find;
