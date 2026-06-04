@@ -19,7 +19,7 @@ called out below.
 | `LineUp`             | `up`                                 | Move selection up one line                   |
 | `LineDown`           | `down`                               | Move selection down one line                 |
 | `GoToLineDialog`     | `secondary-l`                        | Open the "Go to line" dialog                 |
-| `ToggleQuickFind`    | `secondary-f`                        | Show/hide the quick-find bar                 |
+| `ToggleQuickFind`    | _(unbound)_                          | Show/hide the quick-find bar (opens automatically when a file loads; assign a key in Preferences to toggle it) |
 | `FindNext`           | `f3` / `secondary-g`                 | Jump to the next match                       |
 | `FindPrevious`       | `shift-f3` / `secondary-shift-g`     | Jump to the previous match                   |
 | `CloseFind`          | `escape`                             | Close the quick-find bar                     |

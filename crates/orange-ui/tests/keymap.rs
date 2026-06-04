@@ -43,8 +43,14 @@ fn known_actions_list_matches_default_keymap() {
         );
     }
 
-    // Every KNOWN_ACTIONS entry must appear in defaults (no orphan registry entries).
+    // Every KNOWN_ACTIONS entry must appear in defaults (no orphan registry
+    // entries) — except actions that are deliberately shipped without a
+    // default key but stay resolvable so users can rebind them.
+    const UNBOUND_BY_DESIGN: &[&str] = &["ToggleQuickFind"];
     for action in &known {
+        if UNBOUND_BY_DESIGN.contains(action) {
+            continue;
+        }
         assert!(
             default_actions.contains(action),
             "KNOWN_ACTIONS lists {action:?} but no default binding uses it",

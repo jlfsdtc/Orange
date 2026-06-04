@@ -71,6 +71,13 @@ orange-app ──► orange-ui ──► orange-core ──► orange-regex
   elsewhere. Use it instead of hard-coding either; only the `Quit` action
   is bound outside the user keymap (in `orange-app`).
 - **Themes** live in `assets/themes/{light,dark}.json` — not in code.
+- **Quick-find input** (`orange-ui/src/quick_find.rs`) is a hand-rolled text
+  field, not a GPUI text input: each query char is its own `div` so mouse
+  hit-testing maps clicks to byte offsets. `caret` is the byte-offset insertion
+  point (typing/backspace/arrows act there), drawn as a 1px bar that blinks via
+  a `start_blink` background task (modeled on `log_view`'s `start_tail_poll`).
+  The caret is painted only when `focus_handle.is_focused(window)` — clicking
+  away blurs the bar and hides it. Keep `caret` on a char boundary when editing.
 - **Release profile** (`Cargo.toml`) uses `lto = true`, `codegen-units = 1`,
   `strip = "symbols"`. Don't relax these without a reason; they're load-bearing
   for binary size and startup latency.

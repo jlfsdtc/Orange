@@ -148,7 +148,11 @@ fn common_bindings() -> Vec<KeyBindingSpec> {
         KeyBindingSpec::new("secondary-end", "ScrollToBottom"),
         KeyBindingSpec::new("pageup", "PageUp"),
         KeyBindingSpec::new("pagedown", "PageDown"),
-        KeyBindingSpec::new("secondary-f", "ToggleQuickFind"),
+        // NOTE: `ToggleQuickFind` is intentionally left unbound by default —
+        // the quick-find box opens automatically when a file is loaded, and
+        // `secondary-f` is deliberately freed so users can rebind it. The
+        // action stays resolvable (Find menu + Shortcuts editor) so it can be
+        // re-assigned a key from Preferences.
         KeyBindingSpec::new("f3", "FindNext"),
         KeyBindingSpec::new("shift-f3", "FindPrevious"),
         KeyBindingSpec::new("secondary-g", "FindNext"),
@@ -218,9 +222,12 @@ pub fn default_bindings_windows() -> Vec<KeyBindingSpec> {
 mod tests {
     use super::*;
 
+    // `ToggleQuickFind` is intentionally NOT required: it has no default key
+    // (the quick-find box auto-opens on file load), though it stays resolvable
+    // so users can rebind it from Preferences.
     const REQUIRED_ACTIONS: &[&str] = &[
         "OpenFile", "ScrollToTop", "ScrollToBottom", "PageUp", "PageDown",
-        "ToggleQuickFind", "FindNext", "FindPrevious", "CloseFind",
+        "FindNext", "FindPrevious", "CloseFind",
         "ToggleTailMode", "ToggleFilteredView", "OpenOptions", "CloseTab",
         "LineUp", "LineDown", "GoToLineDialog", "ToggleFilterPanel", "ToggleTheme",
     ];

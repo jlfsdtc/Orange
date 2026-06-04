@@ -5,7 +5,6 @@
     { "key": "secondary-end", "action": "ScrollToBottom" },
     { "key": "pageup", "action": "PageUp" },
     { "key": "pagedown", "action": "PageDown" },
-    { "key": "secondary-f", "action": "ToggleQuickFind" },
     { "key": "f3", "action": "FindNext" },
     { "key": "shift-f3", "action": "FindPrevious" },
     { "key": "secondary-g", "action": "FindNext" },

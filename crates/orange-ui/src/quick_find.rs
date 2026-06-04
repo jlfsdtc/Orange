@@ -6,6 +6,7 @@
 //! navigation (Enter, F3, Cmd+G), it emits `QuickFindEvent::JumpTo(line)` so
 //! the parent view can scroll/select that line in the active LogView.
 
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 use orange_core::LogData;
 use orange_regex::{RegexEngine, RegexFlags};
@@ -45,8 +46,19 @@ pub struct QuickFindState {
     /// Current search query.
     query: String,
     /// Optional selection over `query` as (start_byte, end_byte) with start <= end.
-    /// `None` means no selection (caret at end of query).
+    /// `None` means no selection (a collapsed caret at `caret`).
     selection: Option<(usize, usize)>,
+    /// Byte offset of the text insertion point into `query` (`0..=query.len()`,
+    /// always on a char boundary). Where typed text is inserted and where the
+    /// blinking caret is drawn when no selection is active.
+    caret: usize,
+    /// Blink phase: `true` paints the caret bar, `false` hides it. Toggled by
+    /// the blink task; forced to `true` on any caret-moving or editing action so
+    /// the caret shows solid immediately, then resumes blinking.
+    caret_on: bool,
+    /// Guard so at most one blink task runs at a time. Set when the task starts,
+    /// cleared when it exits (on the bar being hidden).
+    blinking: bool,
     /// Matching line numbers.
     matching_lines: Vec<u64>,
     /// Byte ranges within each matching line where the query hit. Indices
@@ -114,6 +126,9 @@ impl QuickFindState {
             visible: false,
             query: String::new(),
             selection: None,
+            caret: 0,
+            caret_on: true,
+            blinking: false,
             matching_lines: Vec::new(),
             line_matches: Vec::new(),
             current_match: 0,
@@ -162,6 +177,9 @@ impl QuickFindState {
         self.visible = !self.visible;
         if self.visible {
             self.focus_handle.focus(window);
+            self.caret = self.query.len();
+            self.caret_on = true;
+            self.start_blink(cx);
             if !self.query.is_empty() {
                 self.execute_search(cx);
                 self.emit_current_match(cx);
@@ -169,6 +187,7 @@ impl QuickFindState {
         } else {
             self.query.clear();
             self.selection = None;
+            self.caret = 0;
             self.matching_lines.clear();
             self.line_matches.clear();
             self.current_match = 0;
@@ -180,11 +199,65 @@ impl QuickFindState {
         cx.notify();
     }
 
+    /// Make the find bar visible without toggling it off if it's already
+    /// shown, and replay any existing query against the current log data.
+    /// Unlike `toggle`, this never hides the bar and never grabs keyboard
+    /// focus — used to auto-open the search box when a file finishes loading,
+    /// so it doesn't steal focus from the freshly-loaded log view.
+    pub fn show(&mut self, cx: &mut Context<Self>) {
+        self.visible = true;
+        self.caret = self.query.len();
+        self.caret_on = true;
+        self.start_blink(cx);
+        if !self.query.is_empty() {
+            self.execute_search(cx);
+            self.emit_current_match(cx);
+        }
+        cx.notify();
+    }
+
+    /// Drive the blinking caret. Toggles `caret_on` every 500ms while the bar
+    /// is visible and re-renders; exits (and clears `blinking`) once the bar is
+    /// hidden. The `blinking` guard keeps a single task alive across repeated
+    /// show calls. Caret visibility is additionally gated on focus at render
+    /// time, so an unfocused-but-visible bar just toggles a hidden caret.
+    fn start_blink(&mut self, cx: &mut Context<Self>) {
+        if self.blinking {
+            return;
+        }
+        self.blinking = true;
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            loop {
+                executor.timer(std::time::Duration::from_millis(500)).await;
+                let keep_going = cx
+                    .update(|cx| {
+                        this.update(cx, |state, cx| {
+                            if !state.visible {
+                                state.blinking = false;
+                                return false;
+                            }
+                            state.caret_on = !state.caret_on;
+                            cx.notify();
+                            true
+                        })
+                        .unwrap_or(false)
+                    })
+                    .unwrap_or(false);
+                if !keep_going {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
     /// Close the find bar.
     pub fn close(&mut self, cx: &mut Context<Self>) {
         self.visible = false;
         self.query.clear();
         self.selection = None;
+        self.caret = 0;
         self.matching_lines.clear();
         self.line_matches.clear();
         self.current_match = 0;
@@ -559,6 +632,7 @@ impl QuickFindState {
                 "a" => {
                     if !self.query.is_empty() {
                         self.selection = Some((0, self.query.len()));
+                        self.caret = self.query.len();
                         cx.notify();
                     }
                     cx.stop_propagation();
@@ -581,6 +655,8 @@ impl QuickFindState {
                         cx.write_to_clipboard(ClipboardItem::new_string(text));
                         self.query.replace_range(s..e, "");
                         self.selection = None;
+                        self.caret = s;
+                        self.caret_on = true;
                         self.execute_search(cx);
                         self.emit_current_match(cx);
                     }
@@ -619,12 +695,42 @@ impl QuickFindState {
                 if let Some((s, e)) = self.selection.filter(|(s, e)| s < e) {
                     self.query.replace_range(s..e, "");
                     self.selection = None;
+                    self.caret = s;
+                    self.caret_on = true;
                     self.execute_search(cx);
                     self.emit_current_match(cx);
-                } else if self.query.pop().is_some() {
+                } else if self.caret > 0 {
+                    let prev = self.prev_boundary(self.caret);
+                    self.query.replace_range(prev..self.caret, "");
+                    self.caret = prev;
+                    self.caret_on = true;
                     self.execute_search(cx);
                     self.emit_current_match(cx);
                 }
+            }
+            "left" => {
+                self.selection = None;
+                self.caret = self.prev_boundary(self.caret);
+                self.caret_on = true;
+                cx.notify();
+            }
+            "right" => {
+                self.selection = None;
+                self.caret = self.next_boundary(self.caret);
+                self.caret_on = true;
+                cx.notify();
+            }
+            "home" => {
+                self.selection = None;
+                self.caret = 0;
+                self.caret_on = true;
+                cx.notify();
+            }
+            "end" => {
+                self.selection = None;
+                self.caret = self.query.len();
+                self.caret_on = true;
+                cx.notify();
             }
             "enter" => {
                 self.next_match(cx);
@@ -644,18 +750,46 @@ impl QuickFindState {
         }
     }
 
-    /// Replace the current selection (or append at end) with `text`, then
-    /// clear the selection.
+    /// Replace the current selection (or insert at the caret) with `text`, then
+    /// collapse the selection and place the caret just past the inserted text.
     fn replace_selection_with(&mut self, text: &str) {
         match self.selection {
             Some((s, e)) if s < e => {
                 self.query.replace_range(s..e, text);
+                self.caret = s + text.len();
             }
             _ => {
-                self.query.push_str(text);
+                self.query.insert_str(self.caret, text);
+                self.caret += text.len();
             }
         }
         self.selection = None;
+        self.caret_on = true;
+    }
+
+    /// Byte offset of the char boundary before `pos` (or `pos` if already 0).
+    fn prev_boundary(&self, pos: usize) -> usize {
+        if pos == 0 {
+            return 0;
+        }
+        let mut p = pos - 1;
+        while p > 0 && !self.query.is_char_boundary(p) {
+            p -= 1;
+        }
+        p
+    }
+
+    /// Byte offset of the char boundary after `pos` (or `pos` if at the end).
+    fn next_boundary(&self, pos: usize) -> usize {
+        let len = self.query.len();
+        if pos >= len {
+            return len;
+        }
+        let mut p = pos + 1;
+        while p < len && !self.query.is_char_boundary(p) {
+            p += 1;
+        }
+        p
     }
 
     /// Render the find bar plus the results list underneath it. Returns
@@ -671,7 +805,14 @@ impl QuickFindState {
         if !self.visible {
             return None;
         }
-        let _ = window;
+
+        // Caret is painted only when the bar holds keyboard focus, the blink
+        // phase is "on", and there's no active selection. Clicking elsewhere
+        // blurs the focus handle (GPUI auto-transfers focus on mouse-down into
+        // any other tracked element), which hides the caret per requirement 2.
+        let show_caret =
+            self.focus_handle.is_focused(window) && self.caret_on && self.selection.is_none();
+        let caret_byte = self.caret;
 
         let no_match_color = Hsla { h: 0.0, s: 0.8, l: 0.5, a: 1.0 };
         let (match_text, count_color) = if self.regex_error.is_some() {
@@ -714,16 +855,40 @@ impl QuickFindState {
                 }),
             );
 
+        // A thin vertical caret bar drawn at the insertion point. It's always
+        // present in the layout (so the blink doesn't shift text); only its
+        // color toggles between `theme.foreground` and transparent.
+        let caret_color = if show_caret {
+            theme.foreground
+        } else {
+            Hsla { h: 0.0, s: 0.0, l: 0.0, a: 0.0 }
+        };
+        let caret_el = move || {
+            div()
+                .flex_shrink_0()
+                .w(px(1.0))
+                .h(px(15.0))
+                .bg(caret_color)
+        };
+
         let input_box = if self.query.is_empty() {
+            // Empty state: caret first (when focused) followed by the dimmed
+            // placeholder, so the freshly-opened box looks ready for input.
             input_box.child(
                 div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
                     .flex_grow()
-                    .child("Type to search…")
+                    .child(caret_el())
+                    .child(div().child("Type to search…"))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _event: &MouseDownEvent, _window, cx| {
                             this.drag_anchor = Some(0);
                             this.selection = None;
+                            this.caret = 0;
+                            this.caret_on = true;
                             cx.notify();
                         }),
                     ),
@@ -739,6 +904,10 @@ impl QuickFindState {
 
             let mut spans: Vec<AnyElement> = Vec::new();
             for (cstart, cend, ch_str) in chars {
+                // Caret sits immediately before the character it points at.
+                if cstart == caret_byte {
+                    spans.push(caret_el().into_any_element());
+                }
                 let in_sel = matches!(sel, Some((s, e)) if s <= cstart && e >= cend && s < e);
                 let mut span = div()
                     .child(ch_str)
@@ -747,6 +916,8 @@ impl QuickFindState {
                         cx.listener(move |this, _event: &MouseDownEvent, _window, cx| {
                             this.drag_anchor = Some(cstart);
                             this.selection = None;
+                            this.caret = cstart;
+                            this.caret_on = true;
                             cx.notify();
                         }),
                     )
@@ -762,6 +933,7 @@ impl QuickFindState {
                                 let s = anchor.min(cend);
                                 let e = anchor.max(cend);
                                 let new_sel = if s < e { Some((s, e)) } else { None };
+                                this.caret = cend;
                                 if this.selection != new_sel {
                                     this.selection = new_sel;
                                     cx.notify();
@@ -775,17 +947,23 @@ impl QuickFindState {
                 spans.push(span.into_any_element());
             }
 
+            // Caret at end-of-query renders inside the trailing zone below.
             // Trailing zone fills the remainder of the input box so clicks
             // past the last character anchor at end-of-query.
             spans.push(
                 div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
                     .flex_grow()
-                    .child("\u{2502}")
+                    .when(caret_byte == end_pos, |d| d.child(caret_el()))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _event: &MouseDownEvent, _window, cx| {
                             this.drag_anchor = Some(end_pos);
                             this.selection = None;
+                            this.caret = end_pos;
+                            this.caret_on = true;
                             cx.notify();
                         }),
                     )
@@ -801,6 +979,7 @@ impl QuickFindState {
                                 let s = anchor.min(end_pos);
                                 let e = anchor.max(end_pos);
                                 let new_sel = if s < e { Some((s, e)) } else { None };
+                                this.caret = end_pos;
                                 if this.selection != new_sel {
                                     this.selection = new_sel;
                                     cx.notify();
@@ -811,7 +990,7 @@ impl QuickFindState {
                     .into_any_element(),
             );
 
-            input_box.child(div().flex().flex_row().children(spans))
+            input_box.child(div().flex().flex_row().items_center().children(spans))
         };
 
         let regex_active = self.regex_mode;
@@ -859,14 +1038,14 @@ impl QuickFindState {
         let results_panel = self.build_results_panel(theme, font, window, cx);
 
         // Drag handle sits on top of the bar so dragging UP grows the results
-        // panel (which lives below the bar). Only useful when results exist.
+        // panel (which lives below the bar). The panel is always present while
+        // the bar is open, so the handle is too.
         //
         // The hit zone is 12px tall (3x the visible thumb) so it's easy to
         // grab without growing the chrome much; the centered 2px stripe is
         // the visual cue. `cursor(ResizeUpDown)` confirms interactivity on
         // hover.
-        let has_results = !self.matching_lines.is_empty();
-        let drag_handle = if has_results {
+        let drag_handle = {
             Some(
                 div()
                     .h(px(12.0))
@@ -883,8 +1062,6 @@ impl QuickFindState {
                         }),
                     ),
             )
-        } else {
-            None
         };
 
         // Full-window overlay only while a drag is in progress: catches
@@ -963,8 +1140,32 @@ impl QuickFindState {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        // The panel is always shown while the bar is open. With no matches yet
+        // (empty query, a still-loading file, or a query with zero hits) render
+        // an empty panel carrying the same chrome so the results window is
+        // visibly "open" the moment a file loads.
         if self.matching_lines.is_empty() {
-            return None;
+            let message = if self.query.is_empty() {
+                "Type to search…"
+            } else if self.regex_error.is_some() {
+                "Invalid regex"
+            } else {
+                "No matches"
+            };
+            return Some(
+                div()
+                    .h(self.panel_height)
+                    .w_full()
+                    .bg(theme.background)
+                    .border_t_1()
+                    .border_color(theme.selection)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(theme.line_number)
+                    .child(message)
+                    .into_any(),
+            );
         }
         let data = self.log_data.clone()?;
 

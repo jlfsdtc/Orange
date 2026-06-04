@@ -21,7 +21,9 @@ regex filtering, live tail, bookmarks, and predefined highlight rules.
 - Open arbitrarily large log files with virtual scrolling.
 - Multiple files open at once as tabs (`Cmd/Ctrl-1`…`9` to switch).
 - Filtered view that re-runs as you type, powered by Hyperscan regex.
-- Quick-find bar (`Cmd/Ctrl-F`) with next/previous navigation.
+- Quick-find bar (`Cmd/Ctrl-F`) with next/previous navigation and an editable
+  search box: a focus-gated blinking caret you can position by click or with
+  the arrow / Home / End keys, with text inserted at the caret.
 - Predefined filter sets with persistent highlighting.
 - Tail mode that follows file appends in real time (`notify`-based).
 - Session save/restore — re-open the same files, filters, and scroll position.

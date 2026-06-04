@@ -675,10 +675,13 @@ impl MainWindowState {
             bar.add_tab(name.clone(), Some(path_str));
         });
 
-        // Sync QuickFind to the newly-loaded data.
+        // Sync QuickFind to the newly-loaded data and auto-open the search box
+        // (with its results window) now that there's a file to search.
         let data = log_view.read(cx).log_data();
-        self.quick_find
-            .update(cx, |find, cx| find.set_log_data(data, cx));
+        self.quick_find.update(cx, |find, cx| {
+            find.set_log_data(data, cx);
+            find.show(cx);
+        });
 
         self.status = format!("Opened: {}", name);
         cx.notify();
