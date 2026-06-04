@@ -12,12 +12,12 @@ use orange_regex::{RegexEngine, RegexFlags};
 use std::sync::Arc;
 
 use crate::h_scrollbar::{self, HScrollState};
-use crate::overview::{MinimapEvent, OverviewState};
 use crate::text_selection::{
     char_advance_for, column_for_x, join_char_range, join_full_lines, render_line_content,
     word_range_at, CharPos, CharSelection, LineHighlight, LineSelection, Selection,
 };
 use crate::theme::{FontSettings, Theme};
+use crate::v_scrollbar::{self, VScrollState};
 
 // Actions for quick find.
 actions!(
@@ -80,10 +80,10 @@ pub struct QuickFindState {
     /// handle is at the TOP of the find component, so moving the mouse UP
     /// grows the panel.
     resize_anchor: Option<(Pixels, Pixels)>,
-    /// Whole-file minimap shown to the right of the results list. Its line
-    /// counts (matches) come from `matching_lines`; its viewport reflects
-    /// which results are currently visible in the panel.
-    minimap: Entity<OverviewState>,
+    /// Vertical scrollbar state (drag + measured track bounds) for the results
+    /// list. The scroll position itself lives in `results_scroll`; this only
+    /// drives the bar.
+    v_scroll: VScrollState,
     /// Horizontal scroll state for the results list. Sized from the source
     /// file's longest line so the bar is stable regardless of which matches
     /// are shown; the gutter stays fixed while line content scrolls sideways.
@@ -110,21 +110,6 @@ impl QuickFindState {
     pub fn new(cx: &mut Context<Self>) -> Self {
         cx.observe_global::<Theme>(|_, cx| cx.notify()).detach();
         cx.observe_global::<FontSettings>(|_, cx| cx.notify()).detach();
-        let minimap = cx.new(OverviewState::new);
-        // A click on the minimap maps a file-line back to the closest
-        // result row and scrolls/selects it.
-        cx.subscribe(&minimap, |this, _, event, cx| match event {
-            MinimapEvent::ScrollTo(line) => {
-                if this.matching_lines.is_empty() {
-                    return;
-                }
-                let line = *line;
-                let idx = this.matching_lines.partition_point(|&l| l < line);
-                let idx = idx.min(this.matching_lines.len() - 1);
-                this.select_match(idx, cx);
-            }
-        })
-        .detach();
         Self {
             visible: false,
             query: String::new(),
@@ -140,20 +125,12 @@ impl QuickFindState {
             drag_anchor: None,
             panel_height: px(PANEL_DEFAULT_PX),
             resize_anchor: None,
-            minimap,
+            v_scroll: VScrollState::new(),
             h_scroll: HScrollState::new(),
             result_selection: None,
             result_pending_click: None,
             result_right_click_row: None,
         }
-    }
-
-    /// Toggle the QuickFind minimap visibility. Called from
-    /// `MainWindowState::toggle_minimap` so the strip on both sides of the
-    /// app stays in sync.
-    pub fn toggle_minimap(&mut self, cx: &mut Context<Self>) {
-        self.minimap.update(cx, |m, cx| m.toggle(cx));
-        cx.notify();
     }
 
     /// Toggle regex matching mode and re-run the current search.
@@ -983,7 +960,7 @@ impl QuickFindState {
         &mut self,
         theme: Theme,
         font: FontSettings,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         if self.matching_lines.is_empty() {
@@ -1016,46 +993,6 @@ impl QuickFindState {
         // User-resizable height (see `resize_anchor` and the drag handle in
         // `render_bar`). Falls back to a default if the user hasn't dragged.
         let panel_height = self.panel_height;
-
-        // Push whole-file match density / viewport into the minimap before
-        // we render. Viewport spans the file lines covered by the result
-        // rows currently visible in the panel.
-        let total_file_lines = data.line_count();
-        let line_height_px = f32::from(line_height);
-        // Mirror the trick used in log_view::viewport_lines — reach into
-        // the underlying `ScrollHandle` because `logical_scroll_top_index`
-        // is `cfg(test-support)`-only.
-        let first_visible_result = {
-            let state = self.results_scroll.0.borrow();
-            let off_y = f32::from(state.base_handle.offset().y);
-            if line_height_px > 0.0 {
-                (((-off_y) / line_height_px).max(0.0)) as usize
-            } else {
-                0
-            }
-        };
-        let visible_results = if line_height_px > 0.0 {
-            (f32::from(self.panel_height) / line_height_px).ceil() as usize
-        } else {
-            0
-        };
-        let vp_first_line = matching
-            .get(first_visible_result.min(total.saturating_sub(1)))
-            .copied()
-            .unwrap_or(0);
-        let vp_last_line = matching
-            .get((first_visible_result + visible_results).min(total.saturating_sub(1)))
-            .copied()
-            .unwrap_or(vp_first_line);
-        let vp_size = vp_last_line.saturating_sub(vp_first_line).max(1);
-        let matches_for_minimap = matching.clone();
-        let minimap_window_handle = self.minimap.clone();
-        let minimap_el = minimap_window_handle.update(cx, |m, cx| {
-            m.set_total_lines(total_file_lines, cx);
-            m.set_matches(matches_for_minimap, cx);
-            m.set_viewport(vp_first_line, vp_size, cx);
-            m.render(theme, window, cx)
-        });
 
         let list = uniform_list(
             "quick_find_results",
@@ -1198,6 +1135,15 @@ impl QuickFindState {
         .w_full();
 
         let entity_wheel = cx.entity();
+        let v_scrollbar = v_scrollbar::render(
+            &mut self.v_scroll,
+            |this: &mut QuickFindState| &mut this.v_scroll,
+            &self.results_scroll,
+            total as u64,
+            f32::from(line_height),
+            theme,
+            cx,
+        );
         let scrollbar = h_scrollbar::render(
             &mut self.h_scroll,
             |this: &mut QuickFindState| &mut this.h_scroll,
@@ -1214,48 +1160,44 @@ impl QuickFindState {
                 .bg(theme.background)
                 .border_t_1()
                 .border_color(theme.selection)
+                .flex()
+                .flex_col()
                 .child(
+                    // List + vertical scrollbar share a row; the horizontal bar
+                    // sits below them spanning the panel's width.
                     div()
                         .flex()
                         .flex_row()
-                        .size_full()
-                        // List column: results stacked above the horizontal
-                        // scrollbar; the minimap sits to the right.
+                        .flex_grow()
+                        .overflow_hidden()
                         .child(
                             div()
                                 .flex()
                                 .flex_col()
                                 .flex_grow()
                                 .overflow_hidden()
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .flex_grow()
-                                        .overflow_hidden()
-                                        .child(list)
-                                        // Shift+wheel / horizontal trackpad
-                                        // gesture scrolls the content sideways.
-                                        .on_scroll_wheel(move |event, _window, cx| {
-                                            let delta = event.delta.pixel_delta(line_height);
-                                            let dx = if event.shift {
-                                                f32::from(delta.y)
-                                            } else {
-                                                f32::from(delta.x)
-                                            };
-                                            if dx != 0.0 {
-                                                entity_wheel.update(cx, |this, cx| {
-                                                    if this.h_scroll.scroll_by(-dx, content_w) {
-                                                        cx.notify();
-                                                    }
-                                                });
+                                .child(list)
+                                // Shift+wheel / horizontal trackpad
+                                // gesture scrolls the content sideways.
+                                .on_scroll_wheel(move |event, _window, cx| {
+                                    let delta = event.delta.pixel_delta(line_height);
+                                    let dx = if event.shift {
+                                        f32::from(delta.y)
+                                    } else {
+                                        f32::from(delta.x)
+                                    };
+                                    if dx != 0.0 {
+                                        entity_wheel.update(cx, |this, cx| {
+                                            if this.h_scroll.scroll_by(-dx, content_w) {
+                                                cx.notify();
                                             }
-                                        }),
-                                )
-                                .child(scrollbar),
+                                        });
+                                    }
+                                }),
                         )
-                        .child(minimap_el),
+                        .child(v_scrollbar),
                 )
+                .child(scrollbar)
                 .into_any(),
         )
     }

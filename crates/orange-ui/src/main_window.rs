@@ -354,8 +354,6 @@ impl MainWindowState {
         for tab in &self.tabs {
             tab.overview.update(cx, |v, cx| v.toggle(cx));
         }
-        self.quick_find
-            .update(cx, |qf, cx| qf.toggle_minimap(cx));
         cx.notify();
     }
 
