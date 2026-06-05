@@ -9,7 +9,6 @@
     { "key": "shift-f3", "action": "FindPrevious" },
     { "key": "secondary-g", "action": "FindNext" },
     { "key": "secondary-shift-g", "action": "FindPrevious" },
-    { "key": "escape", "action": "CloseFind" },
     { "key": "secondary-t", "action": "ToggleTailMode" },
     { "key": "secondary-,", "action": "OpenOptions" },
     { "key": "secondary-w", "action": "CloseTab" },

@@ -178,19 +178,26 @@ impl MainWindowState {
         })
         .detach();
 
-        // Jump to the requested line when GoToLine submits.
-        cx.subscribe(&go_to_line, |this: &mut Self, _gtl, event, cx| match event {
-            GoToLineEvent::Jump(line_1based) => {
-                // User-facing line numbers are 1-based; LogView is 0-based.
-                let line = line_1based.saturating_sub(1);
-                this.tabs[this.active_tab].log_view.update(cx, |view, cx| {
-                    view.select_line(Some(line), cx);
-                    view.scroll_to_line(line, cx);
-                });
-                this.status = format!("Jumped to line {}", line_1based);
-                cx.notify();
-            }
-        })
+        // Jump to the requested line when GoToLine submits; reclaim focus when
+        // it closes so MainWindow-scoped actions (e.g. Cmd/Ctrl+L) resolve
+        // again — the dialog grabbed focus on open and doesn't release it.
+        cx.subscribe_in(
+            &go_to_line,
+            window,
+            |this: &mut Self, _gtl, event, window, cx| match event {
+                GoToLineEvent::Jump(line_1based) => {
+                    // User-facing line numbers are 1-based; LogView is 0-based.
+                    let line = line_1based.saturating_sub(1);
+                    this.tabs[this.active_tab].log_view.update(cx, |view, cx| {
+                        view.select_line(Some(line), cx);
+                        view.scroll_to_line(line, cx);
+                    });
+                    this.status = format!("Jumped to line {}", line_1based);
+                    cx.notify();
+                }
+                GoToLineEvent::Closed => window.focus(&this.focus_handle),
+            },
+        )
         .detach();
 
         // MainWindow renders these child entities by calling `update(...)` on
@@ -1098,7 +1105,7 @@ impl Render for MainWindowState {
             .update(cx, |sw, _| sw.render_dialog(theme));
         let go_to_line_overlay = self
             .go_to_line
-            .update(cx, |gtl, cx| gtl.render_dialog(theme, cx));
+            .update(cx, |gtl, cx| gtl.render_dialog(theme, window, cx));
 
         // Tab bar
         let tab_bar_el = tab_bar.update(cx, |bar, cx| bar.render(theme, cx));

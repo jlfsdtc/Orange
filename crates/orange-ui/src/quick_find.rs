@@ -735,7 +735,9 @@ impl QuickFindState {
             "enter" => {
                 self.next_match(cx);
             }
-            // "escape" is bound to CloseFind globally; let it bubble.
+            // "escape" intentionally does nothing: the quick-find window is
+            // not closed via escape (that key is reserved for modal dialogs).
+            // `CloseFind` has no default key — users can rebind it in Prefs.
             "escape" => {}
             _ => {
                 if let Some(ch) = keystroke.key_char.as_deref() {

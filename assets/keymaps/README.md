@@ -22,7 +22,7 @@ called out below.
 | `ToggleQuickFind`    | _(unbound)_                          | Show/hide the quick-find bar (opens automatically when a file loads; assign a key in Preferences to toggle it) |
 | `FindNext`           | `f3` / `secondary-g`                 | Jump to the next match                       |
 | `FindPrevious`       | `shift-f3` / `secondary-shift-g`     | Jump to the previous match                   |
-| `CloseFind`          | `escape`                             | Close the quick-find bar                     |
+| `CloseFind`          | _(unbound)_                          | Close the quick-find bar (no default key — `escape` is reserved for modal dialogs; assign a key in Preferences) |
 | `ToggleFilterPanel`  | `secondary-shift-p`                  | Show/hide the predefined-filters panel       |
 | `ToggleTailMode`     | `secondary-t`                        | Toggle tail mode (auto-refresh)              |
 | `ToggleTheme`        | `secondary-shift-t`                  | Flip between light and dark theme            |

@@ -157,7 +157,11 @@ fn common_bindings() -> Vec<KeyBindingSpec> {
         KeyBindingSpec::new("shift-f3", "FindPrevious"),
         KeyBindingSpec::new("secondary-g", "FindNext"),
         KeyBindingSpec::new("secondary-shift-g", "FindPrevious"),
-        KeyBindingSpec::new("escape", "CloseFind"),
+        // NOTE: `CloseFind` is intentionally left unbound by default — the
+        // search/quick-find window should not close on `escape` (that key is
+        // reserved for dismissing modal dialogs like Go-to-line). The action
+        // stays resolvable (Find menu + Shortcuts editor) so users can rebind
+        // it from Preferences.
         KeyBindingSpec::new("secondary-t", "ToggleTailMode"),
         KeyBindingSpec::new("secondary-,", "OpenOptions"),
         KeyBindingSpec::new("secondary-w", "CloseTab"),
@@ -222,12 +226,13 @@ pub fn default_bindings_windows() -> Vec<KeyBindingSpec> {
 mod tests {
     use super::*;
 
-    // `ToggleQuickFind` is intentionally NOT required: it has no default key
-    // (the quick-find box auto-opens on file load), though it stays resolvable
-    // so users can rebind it from Preferences.
+    // `ToggleQuickFind` and `CloseFind` are intentionally NOT required: they
+    // have no default key (the quick-find box auto-opens on file load and is
+    // not closed via `escape`), though both stay resolvable so users can
+    // rebind them from Preferences.
     const REQUIRED_ACTIONS: &[&str] = &[
         "OpenFile", "ScrollToTop", "ScrollToBottom", "PageUp", "PageDown",
-        "FindNext", "FindPrevious", "CloseFind",
+        "FindNext", "FindPrevious",
         "ToggleTailMode", "ToggleFilteredView", "OpenOptions", "CloseTab",
         "LineUp", "LineDown", "GoToLineDialog", "ToggleFilterPanel", "ToggleTheme",
     ];
