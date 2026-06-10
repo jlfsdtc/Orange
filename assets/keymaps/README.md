@@ -71,7 +71,8 @@ You can edit shortcuts two ways:
 
 1. **In-app** — open **Preferences** (`secondary-,`) and use the **Shortcuts**
    section. Click a row to enter capture mode ("Press a key…"), then press
-   the new combination — `Escape` cancels. Saving applies the new bindings
+   the new combination — `Escape` cancels, `Backspace` unbinds the action.
+   Saving applies the new bindings
    immediately, no restart required. If the new key was already bound to
    another action, the old action is unbound and a notice is shown.
 2. **Edit the JSON file** directly and restart Orange. Action names match

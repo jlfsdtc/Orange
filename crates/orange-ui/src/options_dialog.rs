@@ -8,6 +8,11 @@
 //! Save persists the current options to disk via `Options::save()` and
 //! closes the dialog. Cancel closes without saving — pending edits are
 //! discarded and `load()` is called again next time the dialog opens.
+//!
+//! Shortcut capture runs through `App::intercept_keystrokes`, not the
+//! dialog's `on_key_down`: keystrokes that are already bound (F3,
+//! secondary-t, …) are dispatched as actions before element listeners run,
+//! so an on_key_down-based capture would never see them.
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
@@ -179,6 +184,9 @@ pub struct OptionsDialogState {
     tab: OptionsTab,
     /// Keyboard focus handle for the whole dialog.
     focus_handle: FocusHandle,
+    /// Keeps the capture keystroke interceptor alive for the dialog's
+    /// lifetime (see module docs for why capture can't use on_key_down).
+    _capture_interceptor: Subscription,
 }
 
 impl EventEmitter<OptionsDialogEvent> for OptionsDialogState {}
@@ -186,6 +194,14 @@ impl EventEmitter<OptionsDialogEvent> for OptionsDialogState {}
 impl OptionsDialogState {
     pub fn new(cx: &mut Context<Self>) -> Self {
         cx.observe_global::<Theme>(|_, cx| cx.notify()).detach();
+        let entity = cx.entity().downgrade();
+        let capture_interceptor = cx.intercept_keystrokes(move |event, _window, cx| {
+            if let Some(entity) = entity.upgrade() {
+                entity.update(cx, |this, cx| {
+                    this.handle_capture_keystroke(&event.keystroke, cx);
+                });
+            }
+        });
         Self {
             visible: false,
             options: Options::default(),
@@ -195,7 +211,46 @@ impl OptionsDialogState {
             focused_field: None,
             tab: OptionsTab::General,
             focus_handle: cx.focus_handle(),
+            _capture_interceptor: capture_interceptor,
         }
+    }
+
+    /// Consume one keystroke while a shortcut row is in capture mode.
+    /// Runs from the app-level interceptor, before action dispatch, so it
+    /// must stop propagation for every keystroke it handles — otherwise the
+    /// pressed combo would also fire whatever action it is currently bound to.
+    fn handle_capture_keystroke(&mut self, ks: &Keystroke, cx: &mut Context<Self>) {
+        if !self.visible {
+            return;
+        }
+        let Some(action) = self.capturing.clone() else {
+            return;
+        };
+        let mods = &ks.modifiers;
+        let bare = !mods.platform && !mods.control && !mods.alt && !mods.shift;
+        if ks.key == "escape" && bare {
+            // Cancel capture without binding anything.
+            self.capturing = None;
+        } else if ks.key == "backspace" && bare {
+            // Unbind the action entirely.
+            self.keymap.clear_binding(&action);
+            self.conflict_notice = None;
+            self.capturing = None;
+        } else if let Some(key) = keystroke_to_key_string(ks) {
+            // Replace the action's current binding, then store the new one.
+            // set_binding additionally reports if another action was bumped
+            // off the same key so we can surface the conflict.
+            self.keymap.clear_binding(&action);
+            let displaced = self.keymap.set_binding(&key, &action);
+            self.conflict_notice = displaced.map(|other| {
+                format!("Removed: {} from {other}", format_key_for_display(&key))
+            });
+            self.capturing = None;
+        }
+        // Modifier-only presses fall through: stay in capture mode but still
+        // swallow the keystroke below.
+        cx.stop_propagation();
+        cx.notify();
     }
 
     /// Load options and the keymap from config.
@@ -258,31 +313,9 @@ impl OptionsDialogState {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Shortcut capture mode takes priority over text-field editing.
-        if let Some(action) = self.capturing.clone() {
-            let ks = &event.keystroke;
-            let mods = &ks.modifiers;
-            // Bare Escape cancels capture without binding anything.
-            if ks.key == "escape" && !mods.platform && !mods.control && !mods.alt && !mods.shift {
-                self.capturing = None;
-                cx.notify();
-                return;
-            }
-            if let Some(key) = keystroke_to_key_string(ks) {
-                // Replace the action's current binding, then store the new one.
-                // set_binding additionally reports if another action was bumped
-                // off the same key so we can surface the conflict.
-                self.keymap.clear_binding(&action);
-                let displaced = self.keymap.set_binding(&key, &action);
-                self.conflict_notice = displaced.map(|other| {
-                    format!("Removed: {} from {other}", format_key_for_display(&key))
-                });
-                self.capturing = None;
-                cx.notify();
-            }
-            return;
-        }
-
+        // Shortcut capture is handled by the keystroke interceptor
+        // (handle_capture_keystroke), which stops propagation before this
+        // listener runs. Only text-field editing is handled here.
         let Some(field) = self.focused_field else {
             return;
         };
@@ -957,7 +990,7 @@ impl OptionsDialogState {
             .find(|b| b.action == action)
             .map(|b| b.key.clone());
         let display = if capturing {
-            "Press a key…".to_string()
+            "Press a key… (⌫ unbinds)".to_string()
         } else {
             current_key
                 .as_deref()
@@ -965,48 +998,7 @@ impl OptionsDialogState {
                 .unwrap_or_else(|| "(unbound)".to_string())
         };
         let row_id = ElementId::Name(format!("shortcut-{}", action).into());
-        let unbind_id = ElementId::Name(format!("unbind-{}", action).into());
         let action_for_capture = action.to_string();
-        let action_for_unbind = action.to_string();
-
-        // Chip + optional unbind button. Build conditionally so we don't show
-        // an `×` next to an already-unbound action.
-        let mut chips = div().flex().items_center().gap_2().flex_shrink_0().child(
-            div()
-                .min_w(px(160.0))
-                .flex_shrink_0()
-                .whitespace_nowrap()
-                .px_2()
-                .py_1()
-                .bg(theme.current_line)
-                .border_1()
-                .border_color(if capturing {
-                    theme.search_current
-                } else {
-                    theme.selection
-                })
-                .rounded_sm()
-                .text_color(theme.foreground)
-                .child(display),
-        );
-        if current_key.is_some() {
-            chips = chips.child(
-                div()
-                    .id(unbind_id)
-                    .px_2()
-                    .py_1()
-                    .bg(theme.selection)
-                    .rounded_sm()
-                    .text_color(theme.foreground)
-                    .cursor_pointer()
-                    .child("×")
-                    .on_click(cx.listener(move |this, _event, _window, cx| {
-                        this.keymap.clear_binding(&action_for_unbind);
-                        this.conflict_notice = None;
-                        cx.notify();
-                    })),
-            );
-        }
 
         div()
             .id(row_id)
@@ -1021,7 +1013,26 @@ impl OptionsDialogState {
                 cx.notify();
             }))
             .child(div().text_color(theme.foreground).child(action))
-            .child(chips)
+            .child(
+                div()
+                    // Fixed floor shared by every row so the chips form one
+                    // aligned column (matches the Theme tab's 220px).
+                    .min_w(px(220.0))
+                    .flex_shrink_0()
+                    .whitespace_nowrap()
+                    .px_2()
+                    .py_1()
+                    .bg(theme.current_line)
+                    .border_1()
+                    .border_color(if capturing {
+                        theme.search_current
+                    } else {
+                        theme.selection
+                    })
+                    .rounded_sm()
+                    .text_color(theme.foreground)
+                    .child(display),
+            )
             .into_any()
     }
 
