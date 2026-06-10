@@ -64,11 +64,8 @@ menu) when the shortcut feels foreign.
 
 ## Customizing
 
-The first time Orange launches it writes the platform default keymap to:
-
-- macOS: `~/Library/Application Support/Orange/keymap.json`
-- Linux: `~/.config/orange/keymap.json`
-- Windows: `%APPDATA%\Orange\keymap.json`
+The first time Orange launches it writes the platform default keymap to
+`~/.orange/keymap.json` (the user's home directory on all platforms).
 
 You can edit shortcuts two ways:
 

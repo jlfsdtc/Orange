@@ -10,6 +10,13 @@ pub use options::Options;
 pub use shortcuts::Shortcuts;
 pub use style::ColorScheme;
 
+/// Root directory for all Orange user state: `~/.orange/` on every platform.
+pub fn config_dir() -> std::path::PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".orange")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

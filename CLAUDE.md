@@ -59,9 +59,8 @@ orange-app ──► orange-ui ──► orange-core ──► orange-regex
 
 ## Conventions to preserve
 
-- **Keymap**: the user-editable keymap lives in the platform config dir
-  (`~/Library/Application Support/Orange/` on macOS, `~/.config/orange/`
-  on Linux, `%APPDATA%\Orange\` on Windows). Action names and key syntax
+- **Keymap**: the user-editable keymap lives in `~/.orange/` (the user's
+  home directory on all platforms). Action names and key syntax
   are documented in `assets/keymaps/README.md`; the three reference copies
   `assets/keymaps/default-{macos,linux,windows}.json` are **not** read at
   runtime — each must stay in sync with its sibling `default_bindings_*()`

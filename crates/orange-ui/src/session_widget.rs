@@ -102,10 +102,7 @@ impl SessionWidgetState {
     }
 
     fn session_dir() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("orange")
-            .join("sessions")
+        orange_settings::config_dir().join("sessions")
     }
 
     /// Render the session dialog.

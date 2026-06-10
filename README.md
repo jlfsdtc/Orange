@@ -132,13 +132,8 @@ orange-grep [OPTIONS] <PATTERN> <FILE>
 
 ## Configuration
 
-Orange writes user state under the platform's standard config directory:
-
-| Platform | Path                                            |
-| -------- | ----------------------------------------------- |
-| macOS    | `~/Library/Application Support/Orange/`         |
-| Linux    | `~/.config/orange/`                             |
-| Windows  | `%APPDATA%\Orange\`                             |
+Orange writes user state under `~/.orange/` (the user's home directory on
+all platforms).
 
 Files:
 

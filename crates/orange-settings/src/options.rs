@@ -96,9 +96,6 @@ impl Options {
 
     /// Get the path to the config file.
     fn config_path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("orange")
-            .join("config.toml")
+        crate::config_dir().join("config.toml")
     }
 }

@@ -1,6 +1,6 @@
 //! Keymap configuration: maps key combinations to named actions.
 //!
-//! The file lives at `~/.config/orange/keymap.json`. Action names match the
+//! The file lives at `~/.orange/keymap.json`. Action names match the
 //! gpui `actions!()` identifiers exported by `orange-ui`. Key strings follow
 //! the gpui `KeyBinding::new` syntax (e.g. `"ctrl-shift-t"`, `"pageup"`).
 
@@ -81,10 +81,7 @@ impl Keymap {
 
     /// Path to the keymap file.
     pub fn config_path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("orange")
-            .join("keymap.json")
+        crate::config_dir().join("keymap.json")
     }
 
     /// Bind `key` to `action`, replacing any existing bindings for the same key.

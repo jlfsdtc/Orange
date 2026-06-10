@@ -214,10 +214,7 @@ impl PredefinedFiltersState {
     }
 
     fn config_path() -> std::path::PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("orange")
-            .join("filters.json")
+        orange_settings::config_dir().join("filters.json")
     }
 
     /// Render the filter panel.
