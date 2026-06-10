@@ -673,7 +673,11 @@ impl OptionsDialogState {
                             .child(
                                 div()
                                     .id(field_id)
-                                    .min_w(px(120.0))
+                                    // Same floor as the theme toggle chip above so the
+                                    // Theme tab's value column shares one left edge.
+                                    .min_w(px(220.0))
+                                    .flex_shrink_0()
+                                    .whitespace_nowrap()
                                     .px_2()
                                     .py_1()
                                     .bg(theme.current_line)
@@ -847,6 +851,8 @@ impl OptionsDialogState {
             .child(
                 div()
                     .min_w(px(160.0))
+                    .flex_shrink_0()
+                    .whitespace_nowrap()
                     .px_2()
                     .py_1()
                     .bg(theme.current_line)
@@ -886,7 +892,9 @@ impl OptionsDialogState {
             .child(div().text_color(theme.line_number).child(label.to_string()))
             .child(
                 div()
-                    .min_w(px(80.0))
+                    .min_w(px(160.0))
+                    .flex_shrink_0()
+                    .whitespace_nowrap()
                     .px_2()
                     .py_1()
                     .bg(theme.current_line)
@@ -920,7 +928,9 @@ impl OptionsDialogState {
             .child(div().text_color(theme.line_number).child(label.to_string()))
             .child(
                 div()
-                    .min_w(px(60.0))
+                    .min_w(px(160.0))
+                    .flex_shrink_0()
+                    .whitespace_nowrap()
                     .px_2()
                     .py_1()
                     .bg(bg)
@@ -961,9 +971,11 @@ impl OptionsDialogState {
 
         // Chip + optional unbind button. Build conditionally so we don't show
         // an `×` next to an already-unbound action.
-        let mut chips = div().flex().items_center().gap_2().child(
+        let mut chips = div().flex().items_center().gap_2().flex_shrink_0().child(
             div()
                 .min_w(px(160.0))
+                .flex_shrink_0()
+                .whitespace_nowrap()
                 .px_2()
                 .py_1()
                 .bg(theme.current_line)
@@ -1029,6 +1041,9 @@ impl OptionsDialogState {
             .child(
                 div()
                     .id("theme-toggle")
+                    .min_w(px(220.0))
+                    .flex_shrink_0()
+                    .whitespace_nowrap()
                     .px_2()
                     .py_1()
                     .bg(theme.current_line)
