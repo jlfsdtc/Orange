@@ -1,6 +1,7 @@
 //! Benchmarks for orange-core: indexing, line storage, and search.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
 use orange_core::log_data::LogData;
 use orange_core::log_filtered_data::LogFilteredData;
 use orange_regex::RegexFlags;

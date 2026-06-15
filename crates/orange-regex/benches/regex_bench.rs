@@ -1,6 +1,7 @@
 //! Benchmarks for orange-regex: Hyperscan pattern compilation and scanning.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
 use orange_regex::engine::RegexEngine;
 use orange_regex::RegexFlags;
 
